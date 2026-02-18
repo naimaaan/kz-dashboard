@@ -1,14 +1,20 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
 	Boxes,
+	Clock3,
+	Cpu,
+	ChevronDown,
 	Copy,
+	Loader2,
 	Menu,
+	MemoryStick,
 	Play,
 	RefreshCw,
 	RotateCcw,
 	ScrollText,
+	Server,
 	Settings,
 	Square,
 	Wrench,
@@ -18,9 +24,11 @@ import { ThemeToggle } from '@/components/theme-toggle'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { IconButton } from '@/components/ui/icon-button'
 import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import { Select } from '@/components/ui/select'
+import { Skeleton } from '@/components/ui/skeleton'
 import {
 	Sheet,
 	SheetContent,
@@ -29,6 +37,7 @@ import {
 	SheetTitle,
 	SheetTrigger,
 } from '@/components/ui/sheet'
+import { cn } from '@/lib/utils'
 
 export interface ContainerItem {
 	id: string
@@ -36,11 +45,12 @@ export interface ContainerItem {
 	image: string
 	state: string
 	status: string
+	labels: Record<string, string>
+	cluster: string | null
 }
 
 interface HostStats {
-	cpuLoad: number | null
-	cpuLoadNote?: string
+	cpuPercent: number
 	totalMemBytes: number
 	freeMemBytes: number
 	usedMemBytes: number
@@ -62,6 +72,14 @@ interface LogsResponse {
 
 type StatusFilter = 'all' | 'running' | 'stopped' | 'restarting'
 type BulkAction = 'start' | 'stop' | 'restart'
+type ClusterAction = 'start' | 'stop' | 'restart'
+
+interface ClusterActionResult {
+	ok: true
+	total: number
+	succeeded: string[]
+	failed: Array<{ id: string; name: string; error: string }>
+}
 
 interface BulkActionResult {
 	ok: true
@@ -92,6 +110,7 @@ export function ContainerDashboard() {
 	)
 	const [searchQuery, setSearchQuery] = useState('')
 	const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+	const [selectedCluster, setSelectedCluster] = useState<string>('all')
 	const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null)
 	const [isLogsOpen, setIsLogsOpen] = useState(false)
 	const [logsContainer, setLogsContainer] = useState<ContainerItem | null>(null)
@@ -99,6 +118,14 @@ export function ContainerDashboard() {
 	const [logsTail, setLogsTail] = useState(200)
 	const [isLogsLoading, setIsLogsLoading] = useState(false)
 	const [logsError, setLogsError] = useState<string | null>(null)
+	const logsScrollRef = useRef<HTMLDivElement | null>(null)
+	const [clusterActionSummary, setClusterActionSummary] = useState<{
+		cluster: string
+		action: ClusterAction
+		total: number
+		succeeded: number
+		failed: Array<{ id: string; name: string; error: string }>
+	} | null>(null)
 
 	const summary = useMemo(() => {
 		let running = 0
@@ -162,13 +189,18 @@ export function ContainerDashboard() {
 		[summary],
 	)
 
-	const statusBadgeVariant = (container: ContainerItem) => {
-		const state = container.state.toLowerCase()
-		const status = container.status.toLowerCase()
-		if (state === 'running' && !status.includes('restarting')) {
-			return 'default' as const
+	const statusBadgeClassName = (container: ContainerItem) => {
+		const state = lifecycleState(container)
+
+		if (state === 'running') {
+			return 'border-emerald-500/40 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
 		}
-		return 'secondary' as const
+
+		if (state === 'restarting') {
+			return 'border-amber-500/40 bg-amber-500/15 text-amber-700 dark:text-amber-300'
+		}
+
+		return 'border-rose-500/40 bg-rose-500/15 text-rose-700 dark:text-rose-300'
 	}
 
 	const matchesStatusFilter = (
@@ -198,6 +230,15 @@ export function ContainerDashboard() {
 
 		return containers
 			.filter(container => {
+				const clusterMatch =
+					selectedCluster === 'all' ||
+					(container.cluster ?? 'other').toLowerCase() ===
+						selectedCluster.toLowerCase()
+
+				if (!clusterMatch) {
+					return false
+				}
+
 				const queryMatch =
 					normalizedQuery.length === 0 ||
 					container.name.toLowerCase().includes(normalizedQuery) ||
@@ -208,15 +249,55 @@ export function ContainerDashboard() {
 				return queryMatch && statusMatch
 			})
 			.sort((first, second) => first.name.localeCompare(second.name))
-	}, [containers, searchQuery, statusFilter])
+	}, [containers, searchQuery, statusFilter, selectedCluster])
+
+	const clusterStats = useMemo(() => {
+		const counts: Record<string, number> = {}
+
+		for (const container of containers) {
+			const cluster = (container.cluster ?? 'other').toLowerCase()
+			counts[cluster] = (counts[cluster] ?? 0) + 1
+		}
+
+		const clusters = Object.entries(counts)
+			.map(([name, count]) => ({ name, count }))
+			.sort((first, second) => first.name.localeCompare(second.name))
+
+		return {
+			total: containers.length,
+			clusters,
+		}
+	}, [containers])
+
+	const activeClusterLabel =
+		selectedCluster === 'all' ? 'All clusters' : `Cluster: ${selectedCluster}`
 
 	const hostCpuPercent = useMemo(() => {
-		if (!hostStats || hostStats.cpuLoad === null) {
+		if (!hostStats) {
 			return null
 		}
 
-		return Math.min(100, Math.max(0, hostStats.cpuLoad * 100))
+		return Math.min(100, Math.max(0, hostStats.cpuPercent))
 	}, [hostStats])
+
+	const hostRamPercent = useMemo(() => {
+		if (!hostStats) {
+			return null
+		}
+
+		return Math.min(100, Math.max(0, hostStats.usedMemPercent))
+	}, [hostStats])
+
+	const systemBadgeText = useMemo(() => {
+		const cpuText = hostCpuPercent === null ? '--' : Math.round(hostCpuPercent)
+		const ramText = hostRamPercent === null ? '--' : Math.round(hostRamPercent)
+
+		return `System Ready • ${summary.running} running • CPU ${cpuText}% • RAM ${ramText}%`
+	}, [summary.running, hostCpuPercent, hostRamPercent])
+
+	const isSystemWarning =
+		(hostCpuPercent !== null && hostCpuPercent > 80) ||
+		(hostRamPercent !== null && hostRamPercent > 90)
 
 	const lastUpdatedText = useMemo(() => {
 		if (!lastUpdatedAt) {
@@ -335,6 +416,39 @@ export function ContainerDashboard() {
 		return formatMb(bytes)
 	}
 
+	const formatUptime = (uptimeSeconds: number) => {
+		const totalMinutes = Math.max(Math.floor(uptimeSeconds / 60), 0)
+		const days = Math.floor(totalMinutes / (60 * 24))
+		const hours = Math.floor((totalMinutes % (60 * 24)) / 60)
+		const minutes = totalMinutes % 60
+
+		if (days > 0) {
+			return `${days}d ${hours}h`
+		}
+
+		if (hours > 0) {
+			return `${hours}h ${minutes}m`
+		}
+
+		return `${minutes}m`
+	}
+
+	const uptimeBadgeClassName = useMemo(() => {
+		if (!hostStats) {
+			return 'border-border bg-secondary text-secondary-foreground'
+		}
+
+		if (hostStats.uptimeSeconds < 15 * 60) {
+			return 'border-rose-500/40 bg-rose-500/15 text-rose-700 dark:text-rose-300'
+		}
+
+		if (hostStats.uptimeSeconds < 60 * 60) {
+			return 'border-amber-500/40 bg-amber-500/15 text-amber-700 dark:text-amber-300'
+		}
+
+		return 'border-emerald-500/40 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+	}, [hostStats])
+
 	const lifecycleState = (container: ContainerItem) => {
 		const state = container.state.toLowerCase()
 		const status = container.status.toLowerCase()
@@ -348,6 +462,37 @@ export function ContainerDashboard() {
 		}
 
 		return 'stopped' as const
+	}
+
+	const formatClusterLabel = (cluster: string | null) => cluster ?? 'other'
+
+	const formatContainerUptime = (status: string) => {
+		const normalized = status.trim()
+		if (normalized.length === 0) {
+			return 'n/a'
+		}
+
+		const upIndex = normalized.toLowerCase().indexOf('up ')
+		if (upIndex === -1) {
+			return 'stopped'
+		}
+
+		const uptime = normalized
+			.slice(upIndex + 3)
+			.split('(')[0]
+			.trim()
+		return uptime.length > 0 ? uptime : 'running'
+	}
+
+	const shortId = (id: string) => id.slice(0, 12)
+
+	const copyContainerId = async (id: string) => {
+		try {
+			await navigator.clipboard.writeText(id)
+			toast.success('Container id copied')
+		} catch {
+			toast.error('Failed to copy container id')
+		}
 	}
 
 	const refreshAll = async (showLoader = false) => {
@@ -451,6 +596,14 @@ export function ContainerDashboard() {
 		return () => window.removeEventListener('keydown', onKeyDown)
 	}, [filteredContainers])
 
+	useEffect(() => {
+		if (!isLogsOpen || !logsScrollRef.current) {
+			return
+		}
+
+		logsScrollRef.current.scrollTop = logsScrollRef.current.scrollHeight
+	}, [logsText, isLogsOpen])
+
 	const runAction = async (
 		id: string,
 		action: 'start' | 'stop' | 'restart',
@@ -526,6 +679,62 @@ export function ContainerDashboard() {
 		}
 	}
 
+	const runClusterAction = async (action: ClusterAction) => {
+		if (selectedCluster === 'all') {
+			return
+		}
+
+		if (action !== 'start') {
+			const isConfirmed = window.confirm(
+				action === 'stop'
+					? `Stop all containers in cluster "${selectedCluster}"?`
+					: `Restart all containers in cluster "${selectedCluster}"?`,
+			)
+			if (!isConfirmed) {
+				return
+			}
+		}
+
+		setPendingBulkAction(action)
+		setErrorMessage(null)
+		setClusterActionSummary(null)
+
+		try {
+			const response = await fetch(
+				`/api/clusters/${encodeURIComponent(selectedCluster)}/${action}`,
+				{ method: 'POST' },
+			)
+
+			if (!response.ok) {
+				throw new Error(`Failed to ${action} cluster`)
+			}
+
+			const result = (await response.json()) as ClusterActionResult
+			setClusterActionSummary({
+				cluster: selectedCluster,
+				action,
+				total: result.total,
+				succeeded: result.succeeded.length,
+				failed: result.failed,
+			})
+
+			toast.success(
+				`${selectedCluster}: ${action} ${result.succeeded.length}/${result.total} succeeded`,
+			)
+
+			if (result.failed.length > 0) {
+				toast.error(`${result.failed.length} container(s) failed`)
+			}
+
+			await refreshAll()
+		} catch {
+			setErrorMessage(`Failed to ${action} cluster. Please try again.`)
+			toast.error(`Cluster ${action} failed`)
+		} finally {
+			setPendingBulkAction(null)
+		}
+	}
+
 	const navItems = [
 		{ href: '#overview', label: 'Overview', icon: Boxes },
 		{ href: '#containers', label: 'Containers', icon: Wrench },
@@ -534,9 +743,9 @@ export function ContainerDashboard() {
 	]
 
 	return (
-		<div className='min-h-screen bg-muted/20'>
+		<div className='min-h-screen bg-gray-50 dark:bg-zinc-950'>
 			<div className='flex min-h-screen'>
-				<aside className='sticky top-0 hidden h-screen w-64 shrink-0 border-r bg-background/95 p-4 md:block'>
+				<aside className='sticky top-0 hidden h-screen w-64 shrink-0 border-r border-zinc-200/60 bg-background/90 p-4 dark:border-zinc-800 md:block'>
 					<div className='mb-6'>
 						<p className='text-xs uppercase tracking-widest text-muted-foreground'>
 							KZ Admin
@@ -558,11 +767,46 @@ export function ContainerDashboard() {
 							)
 						})}
 					</nav>
+
+					<div className='mt-6 border-t pt-4'>
+						<p className='mb-2 text-xs font-medium uppercase tracking-widest text-muted-foreground'>
+							Clusters
+						</p>
+						<button
+							type='button'
+							onClick={() => setSelectedCluster('all')}
+							className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-sm transition-colors ${
+								selectedCluster === 'all'
+									? 'bg-accent text-accent-foreground'
+									: 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+							}`}
+						>
+							<span>All</span>
+							<Badge variant='secondary'>{clusterStats.total}</Badge>
+						</button>
+						<div className='mt-1 space-y-1'>
+							{clusterStats.clusters.map(cluster => (
+								<button
+									type='button'
+									key={cluster.name}
+									onClick={() => setSelectedCluster(cluster.name)}
+									className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-sm transition-colors ${
+										selectedCluster === cluster.name
+											? 'bg-accent text-accent-foreground'
+											: 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+									}`}
+								>
+									<span className='truncate'>{cluster.name}</span>
+									<Badge variant='secondary'>{cluster.count}</Badge>
+								</button>
+							))}
+						</div>
+					</div>
 				</aside>
 
 				<div className='flex min-w-0 flex-1 flex-col'>
-					<header className='sticky top-0 z-20 border-b bg-background/90 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80 md:px-6'>
-						<div className='flex items-center justify-between gap-3'>
+					<header className='sticky top-0 z-20 border-b border-zinc-200/60 bg-background/90 backdrop-blur supports-[backdrop-filter]:bg-background/80 dark:border-zinc-800'>
+						<div className='mx-auto flex w-full max-w-7xl items-center justify-between gap-4 px-4 py-3 md:px-6'>
 							<div className='flex min-w-0 items-center gap-2'>
 								<Sheet>
 									<SheetTrigger asChild>
@@ -590,77 +834,226 @@ export function ContainerDashboard() {
 												)
 											})}
 										</nav>
+										<div className='mt-5 border-t pt-4'>
+											<p className='mb-2 text-xs font-medium uppercase tracking-widest text-muted-foreground'>
+												Clusters
+											</p>
+											<button
+												type='button'
+												onClick={() => setSelectedCluster('all')}
+												className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-sm ${
+													selectedCluster === 'all'
+														? 'bg-accent text-accent-foreground'
+														: 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+												}`}
+											>
+												<span>All</span>
+												<Badge variant='secondary'>{clusterStats.total}</Badge>
+											</button>
+											<div className='mt-1 space-y-1'>
+												{clusterStats.clusters.map(cluster => (
+													<button
+														type='button'
+														key={cluster.name}
+														onClick={() => setSelectedCluster(cluster.name)}
+														className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-sm ${
+															selectedCluster === cluster.name
+																? 'bg-accent text-accent-foreground'
+																: 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+														}`}
+													>
+														<span className='truncate'>{cluster.name}</span>
+														<Badge variant='secondary'>{cluster.count}</Badge>
+													</button>
+												))}
+											</div>
+										</div>
 									</SheetContent>
 								</Sheet>
 								<div className='min-w-0'>
-									<h1 className='truncate text-xl font-semibold'>
+									<h1 className='truncate text-2xl font-semibold'>
 										KZ-Sploitable Dashboard
 									</h1>
-									<p className='text-xs text-muted-foreground'>
-										Container operations overview and controls
+									<p className='text-sm text-muted-foreground'>
+										Container operations overview and controls ·{' '}
+										{activeClusterLabel} · Press R to refresh
 									</p>
 								</div>
 							</div>
 
-							<div className='flex items-center gap-2'>
-								<Badge variant='default'>System Ready</Badge>
+							<div className='flex shrink-0 items-center gap-3'>
+								<div className='hidden items-center gap-2 rounded-full border border-zinc-200/60 bg-background/70 px-2 py-1 dark:border-zinc-800 lg:flex'>
+									<Badge
+										variant='default'
+										className={cn(
+											'border-transparent',
+											isSystemWarning
+												? 'border-amber-500/50 bg-amber-500/15 text-amber-700 dark:text-amber-300'
+												: 'bg-emerald-600/90 text-white dark:bg-emerald-600',
+										)}
+									>
+										{systemBadgeText}
+									</Badge>
+									<Badge variant='secondary' className='font-mono text-[11px]'>
+										Updated {lastUpdatedText}
+									</Badge>
+								</div>
+								<div className='hidden h-6 w-px bg-zinc-200 dark:bg-zinc-800 lg:block' />
+								{selectedCluster !== 'all' && (
+									<>
+										<Button
+											size='sm'
+											className='min-w-24'
+											onClick={() => void runClusterAction('start')}
+											disabled={isLoading || isBusy}
+										>
+											Start Cluster
+										</Button>
+										<Button
+											size='sm'
+											variant='destructive'
+											className='min-w-24'
+											onClick={() => void runClusterAction('stop')}
+											disabled={isLoading || isBusy}
+										>
+											Stop Cluster
+										</Button>
+										<Button
+											size='sm'
+											variant='secondary'
+											className='min-w-24'
+											onClick={() => void runClusterAction('restart')}
+											disabled={isLoading || isBusy}
+										>
+											Restart Cluster
+										</Button>
+									</>
+								)}
 								<ThemeToggle />
-								<Button
+								<IconButton
 									variant='outline'
 									size='sm'
+									aria-label='Refresh dashboard'
 									onClick={() => void refreshAll()}
 									disabled={isLoading || isBusy}
-								>
-									<RefreshCw className='mr-2 h-4 w-4' />
-									Refresh
-								</Button>
+									icon={
+										<RefreshCw
+											className={cn('h-4 w-4', isLoading && 'animate-spin')}
+										/>
+									}
+								/>
 							</div>
 						</div>
-						<p className='mt-2 text-xs text-muted-foreground'>
-							Last updated: {lastUpdatedText} · Press R to refresh
-						</p>
 					</header>
 
-					<main className='space-y-6 p-4 md:p-6'>
+					<main className='mx-auto w-full max-w-7xl space-y-8 px-4 py-6 md:px-6'>
+						{clusterActionSummary && (
+							<Card className='border-zinc-200/60 shadow-sm dark:border-zinc-800'>
+								<CardContent className='pt-6'>
+									<div className='flex flex-wrap items-center gap-2 text-sm'>
+										<Badge variant='secondary'>
+											{clusterActionSummary.cluster}
+										</Badge>
+										<p className='text-muted-foreground'>
+											Cluster {clusterActionSummary.action}:{' '}
+											{clusterActionSummary.succeeded}/
+											{clusterActionSummary.total} succeeded
+										</p>
+									</div>
+
+									{clusterActionSummary.failed.length > 0 && (
+										<details className='mt-3 rounded-md border p-2'>
+											<summary className='flex cursor-pointer list-none items-center justify-between text-xs text-muted-foreground'>
+												<span>
+													{clusterActionSummary.failed.length} failed containers
+												</span>
+												<ChevronDown className='h-4 w-4' />
+											</summary>
+											<div className='mt-2 space-y-1 text-xs text-muted-foreground'>
+												{clusterActionSummary.failed.map(item => (
+													<p key={item.id}>{item.name}</p>
+												))}
+											</div>
+										</details>
+									)}
+								</CardContent>
+							</Card>
+						)}
+
 						<section id='overview' className='space-y-4'>
-							<div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-4'>
-								{summaryCards.map(card => {
-									const Icon = card.icon
-									const isActive = statusFilter === card.filter
-
-									return (
-										<Card
-											key={card.label}
-											className={isActive ? 'ring-2 ring-primary' : ''}
-										>
-											<button
-												type='button'
-												onClick={() => setStatusFilter(card.filter)}
-												className='w-full text-left'
-											>
-												<CardHeader className='pb-2'>
-													<div className='flex items-center justify-between'>
-														<CardTitle className='text-sm'>
-															{card.label}
-														</CardTitle>
-														<Icon className='h-4 w-4 text-muted-foreground' />
-													</div>
-												</CardHeader>
-												<CardContent>
-													<p className='text-2xl font-semibold'>{card.value}</p>
-												</CardContent>
-											</button>
-										</Card>
-									)
-								})}
+							<div>
+								<h2 className='text-lg font-semibold tracking-tight'>
+									Overview
+								</h2>
+								<p className='text-sm text-muted-foreground'>
+									Live service and workload summary.
+								</p>
 							</div>
+							{isLoading ? (
+								<div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-4'>
+									{Array.from({ length: 4 }).map((_, index) => (
+										<Card
+											key={`summary-skeleton-${index}`}
+											className='h-full border-zinc-200/60 shadow-sm dark:border-zinc-800'
+										>
+											<CardHeader className='pb-2'>
+												<Skeleton className='h-4 w-28' />
+											</CardHeader>
+											<CardContent>
+												<Skeleton className='h-8 w-16' />
+											</CardContent>
+										</Card>
+									))}
+								</div>
+							) : (
+								<div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-4'>
+									{summaryCards.map(card => {
+										const Icon = card.icon
+										const isActive = statusFilter === card.filter
 
-							<div className='flex flex-wrap items-center gap-2'>
+										return (
+											<Card
+												key={card.label}
+												className={cn(
+													'h-full border-zinc-200/60 shadow-sm transition hover:shadow-md dark:border-zinc-800',
+													isActive ? 'ring-2 ring-primary' : '',
+												)}
+											>
+												<button
+													type='button'
+													onClick={() => setStatusFilter(card.filter)}
+													className='flex h-full w-full flex-col justify-between gap-3 text-left'
+												>
+													<CardHeader className='pb-2'>
+														<div className='flex items-center justify-between'>
+															<CardTitle className='text-sm'>
+																{card.label}
+															</CardTitle>
+															<Icon className='h-4 w-4 text-muted-foreground' />
+														</div>
+													</CardHeader>
+													<CardContent>
+														<p className='text-2xl font-semibold'>
+															{card.value}
+														</p>
+													</CardContent>
+												</button>
+											</Card>
+										)
+									})}
+								</div>
+							)}
+
+							<div className='flex flex-wrap items-center gap-3 border-t border-zinc-200/60 pt-4 dark:border-zinc-800'>
 								<Button
 									size='sm'
+									className='min-w-24'
 									onClick={() => runBulkAction('start')}
 									disabled={isLoading || isBusy}
 								>
+									{pendingBulkAction === 'start' && (
+										<Loader2 className='mr-2 h-4 w-4 animate-spin' />
+									)}
 									{pendingBulkAction === 'start'
 										? 'Starting all...'
 										: 'Start All'}
@@ -668,9 +1061,13 @@ export function ContainerDashboard() {
 								<Button
 									size='sm'
 									variant='destructive'
+									className='min-w-24'
 									onClick={() => runBulkAction('stop')}
 									disabled={isLoading || isBusy}
 								>
+									{pendingBulkAction === 'stop' && (
+										<Loader2 className='mr-2 h-4 w-4 animate-spin' />
+									)}
 									{pendingBulkAction === 'stop'
 										? 'Stopping all...'
 										: 'Stop All'}
@@ -678,9 +1075,13 @@ export function ContainerDashboard() {
 								<Button
 									size='sm'
 									variant='secondary'
+									className='min-w-24'
 									onClick={() => runBulkAction('restart')}
 									disabled={isLoading || isBusy}
 								>
+									{pendingBulkAction === 'restart' && (
+										<Loader2 className='mr-2 h-4 w-4 animate-spin' />
+									)}
 									{pendingBulkAction === 'restart'
 										? 'Restarting all...'
 										: 'Restart All'}
@@ -688,7 +1089,18 @@ export function ContainerDashboard() {
 							</div>
 						</section>
 
-						<section id='containers' className='space-y-4'>
+						<section
+							id='containers'
+							className='space-y-4 border-t border-zinc-200/60 pt-6 dark:border-zinc-800'
+						>
+							<div>
+								<h2 className='text-lg font-semibold tracking-tight'>
+									Containers
+								</h2>
+								<p className='text-sm text-muted-foreground'>
+									Operational controls and runtime metadata.
+								</p>
+							</div>
 							<div className='flex flex-col gap-3 lg:flex-row lg:items-center'>
 								<Input
 									placeholder='Search by container name or image'
@@ -729,15 +1141,28 @@ export function ContainerDashboard() {
 							)}
 
 							{isLoading ? (
-								<Card>
-									<CardContent className='pt-6'>
-										<p className='text-sm text-muted-foreground'>
-											Loading containers...
-										</p>
-									</CardContent>
-								</Card>
+								<div className='grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3'>
+									{Array.from({ length: 6 }).map((_, index) => (
+										<Card
+											key={`container-skeleton-${index}`}
+											className='border-zinc-200/60 shadow-sm dark:border-zinc-800'
+										>
+											<CardHeader className='space-y-3'>
+												<div className='flex items-center justify-between gap-3'>
+													<Skeleton className='h-5 w-40' />
+													<Skeleton className='h-5 w-20 rounded-full' />
+												</div>
+												<Skeleton className='h-4 w-full' />
+											</CardHeader>
+											<CardContent className='space-y-3'>
+												<Skeleton className='h-8 w-full' />
+												<Skeleton className='h-8 w-full' />
+											</CardContent>
+										</Card>
+									))}
+								</div>
 							) : filteredContainers.length === 0 ? (
-								<Card>
+								<Card className='border-zinc-200/60 shadow-sm dark:border-zinc-800'>
 									<CardContent className='pt-6'>
 										<p className='text-sm text-muted-foreground'>
 											No containers match the current filters.
@@ -745,21 +1170,33 @@ export function ContainerDashboard() {
 									</CardContent>
 								</Card>
 							) : (
-								<div className='grid gap-4 md:grid-cols-2 xl:grid-cols-3'>
+								<div className='grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3'>
 									{filteredContainers.map(container => {
 										const state = lifecycleState(container)
 										const startDisabled = state !== 'stopped' || isBusy
 										const stopDisabled = state === 'stopped' || isBusy
 										const restartDisabled = state !== 'running' || isBusy
+										const stats = containerStatsById[container.id]
+										const isStartPending =
+											pendingKey === `${container.id}-start`
+										const isStopPending = pendingKey === `${container.id}-stop`
+										const isRestartPending =
+											pendingKey === `${container.id}-restart`
 
 										return (
-											<Card key={container.id} className='overflow-hidden'>
+											<Card
+												key={container.id}
+												className='overflow-hidden border-zinc-200/60 shadow-sm transition hover:border-zinc-300 hover:shadow-md dark:border-zinc-800 dark:hover:border-zinc-700'
+											>
 												<CardHeader>
 													<div className='flex items-center justify-between gap-3'>
 														<CardTitle className='truncate text-base'>
 															{container.name}
 														</CardTitle>
-														<Badge variant={statusBadgeVariant(container)}>
+														<Badge
+															variant='secondary'
+															className={statusBadgeClassName(container)}
+														>
 															{container.status}
 														</Badge>
 													</div>
@@ -768,21 +1205,45 @@ export function ContainerDashboard() {
 													<p className='truncate font-mono text-xs text-muted-foreground'>
 														{container.image}
 													</p>
-													{containerStatsById[container.id] && (
+													<div className='flex flex-wrap items-center gap-2 text-xs text-muted-foreground'>
+														<Badge variant='secondary' className='font-medium'>
+															<Server className='mr-1 h-3.5 w-3.5' />
+															{formatClusterLabel(container.cluster)}
+														</Badge>
+														<Badge variant='secondary'>
+															<Clock3 className='mr-1 h-3.5 w-3.5' />
+															{formatContainerUptime(container.status)}
+														</Badge>
+														<div className='inline-flex items-center gap-1 rounded-full border border-zinc-200/70 bg-zinc-100 px-2 py-0.5 font-mono text-[11px] text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300'>
+															<span>{shortId(container.id)}</span>
+															<IconButton
+																variant='outline'
+																size='sm'
+																className='h-5 w-5 border-0 bg-transparent hover:bg-zinc-200/70 dark:hover:bg-zinc-800'
+																aria-label={`Copy id for ${container.name}`}
+																onClick={() =>
+																	void copyContainerId(container.id)
+																}
+																icon={<Copy className='h-3 w-3' />}
+															/>
+														</div>
+													</div>
+
+													{stats && (
 														<div className='flex flex-wrap gap-2'>
-															<Badge variant='secondary'>
-																CPU{' '}
-																{containerStatsById[
-																	container.id
-																].cpuPercent.toFixed(1)}
-																%
+															<Badge
+																variant='secondary'
+																className='bg-zinc-100 text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300'
+															>
+																<Cpu className='mr-1 h-3.5 w-3.5' />
+																{stats.cpuPercent.toFixed(1)}%
 															</Badge>
-															<Badge variant='secondary'>
-																RAM{' '}
-																{formatMb(
-																	containerStatsById[container.id]
-																		.memUsageBytes,
-																)}
+															<Badge
+																variant='secondary'
+																className='bg-zinc-100 text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300'
+															>
+																<MemoryStick className='mr-1 h-3.5 w-3.5' />
+																{formatMb(stats.memUsageBytes)}
 															</Badge>
 														</div>
 													)}
@@ -790,36 +1251,43 @@ export function ContainerDashboard() {
 													<div className='flex flex-wrap gap-2'>
 														<Button
 															size='sm'
+															className='min-w-20'
 															onClick={() => runAction(container.id, 'start')}
 															disabled={startDisabled}
 														>
-															{pendingKey === `${container.id}-start`
-																? 'Starting...'
-																: 'Start'}
+															{isStartPending && (
+																<Loader2 className='mr-2 h-4 w-4 animate-spin' />
+															)}
+															{isStartPending ? 'Starting...' : 'Start'}
 														</Button>
 														<Button
 															size='sm'
 															variant='destructive'
+															className='min-w-20'
 															onClick={() => runAction(container.id, 'stop')}
 															disabled={stopDisabled}
 														>
-															{pendingKey === `${container.id}-stop`
-																? 'Stopping...'
-																: 'Stop'}
+															{isStopPending && (
+																<Loader2 className='mr-2 h-4 w-4 animate-spin' />
+															)}
+															{isStopPending ? 'Stopping...' : 'Stop'}
 														</Button>
 														<Button
 															size='sm'
 															variant='secondary'
+															className='min-w-20'
 															onClick={() => runAction(container.id, 'restart')}
 															disabled={restartDisabled}
 														>
-															{pendingKey === `${container.id}-restart`
-																? 'Restarting...'
-																: 'Restart'}
+															{isRestartPending && (
+																<Loader2 className='mr-2 h-4 w-4 animate-spin' />
+															)}
+															{isRestartPending ? 'Restarting...' : 'Restart'}
 														</Button>
 														<Button
 															size='sm'
 															variant='outline'
+															className='min-w-20'
 															onClick={() => void openLogs(container)}
 														>
 															Logs
@@ -833,12 +1301,18 @@ export function ContainerDashboard() {
 							)}
 						</section>
 
-						<section id='system' className='space-y-3'>
+						<section
+							id='system'
+							className='space-y-4 border-t border-zinc-200/60 pt-6 dark:border-zinc-800'
+						>
 							<h2 className='text-lg font-semibold tracking-tight'>System</h2>
 							<div className='grid gap-4 md:grid-cols-2'>
-								<Card>
+								<Card className='border-zinc-200/60 shadow-sm dark:border-zinc-800'>
 									<CardHeader className='pb-2'>
-										<CardTitle className='text-sm'>Host RAM used</CardTitle>
+										<CardTitle className='flex items-center gap-2 text-sm'>
+											<MemoryStick className='h-4 w-4 text-muted-foreground' />
+											Host RAM used
+										</CardTitle>
 									</CardHeader>
 									<CardContent className='space-y-3'>
 										{hostStats ? (
@@ -847,13 +1321,16 @@ export function ContainerDashboard() {
 													<p className='text-2xl font-semibold'>
 														{hostStats.usedMemPercent.toFixed(1)}%
 													</p>
-													<p className='text-xs text-muted-foreground'>
+													<p className='font-mono text-xs text-muted-foreground'>
 														{formatMemory(hostStats.usedMemBytes)} /{' '}
 														{formatMemory(hostStats.totalMemBytes)}
 													</p>
 												</div>
-												<Progress value={hostStats.usedMemPercent} />
-												<p className='text-sm text-muted-foreground'>
+												<Progress
+													value={hostStats.usedMemPercent}
+													className='h-2 rounded-full'
+												/>
+												<p className='text-xs text-muted-foreground'>
 													{hostStats.usedMemPercent.toFixed(1)}%
 												</p>
 											</>
@@ -865,29 +1342,40 @@ export function ContainerDashboard() {
 									</CardContent>
 								</Card>
 
-								<Card>
+								<Card className='border-zinc-200/60 shadow-sm dark:border-zinc-800'>
 									<CardHeader className='pb-2'>
-										<CardTitle className='text-sm'>Host CPU load</CardTitle>
+										<CardTitle className='flex items-center gap-2 text-sm'>
+											<Cpu className='h-4 w-4 text-muted-foreground' />
+											Host CPU usage
+										</CardTitle>
 									</CardHeader>
 									<CardContent className='space-y-3'>
 										{hostStats ? (
-											hostStats.cpuLoad === null ? (
-												<p className='text-sm text-muted-foreground'>
-													{hostStats.cpuLoadNote ?? 'N/A on Windows'}
-												</p>
-											) : (
-												<>
-													<div className='flex items-end justify-between gap-3'>
-														<p className='text-2xl font-semibold'>
-															{hostCpuPercent?.toFixed(1)}%
-														</p>
-														<p className='text-xs text-muted-foreground'>
-															Load avg {hostStats.cpuLoad.toFixed(2)}
-														</p>
-													</div>
-													<Progress value={hostCpuPercent ?? 0} />
-												</>
-											)
+											<>
+												<div className='flex items-end justify-between gap-3'>
+													<p className='text-2xl font-semibold'>
+														{hostCpuPercent?.toFixed(1)}%
+													</p>
+													<p className='font-mono text-xs text-muted-foreground'>
+														System-wide
+													</p>
+												</div>
+												<Progress
+													value={hostCpuPercent ?? 0}
+													className='h-2 rounded-full'
+												/>
+												<div className='flex items-center justify-between'>
+													<p className='text-xs text-muted-foreground'>
+														Host uptime
+													</p>
+													<Badge
+														variant='secondary'
+														className={uptimeBadgeClassName}
+													>
+														{formatUptime(hostStats.uptimeSeconds)}
+													</Badge>
+												</div>
+											</>
 										) : (
 											<p className='text-sm text-muted-foreground'>
 												{hostStatsError ?? 'Loading...'}
@@ -898,8 +1386,11 @@ export function ContainerDashboard() {
 							</div>
 						</section>
 
-						<section id='settings'>
-							<Card>
+						<section
+							id='settings'
+							className='space-y-4 border-t border-zinc-200/60 pt-6 dark:border-zinc-800'
+						>
+							<Card className='border-zinc-200/60 shadow-sm dark:border-zinc-800'>
 								<CardHeader>
 									<CardTitle className='text-sm'>Settings</CardTitle>
 								</CardHeader>
@@ -915,59 +1406,72 @@ export function ContainerDashboard() {
 			</div>
 
 			<Sheet open={isLogsOpen} onOpenChange={setIsLogsOpen}>
-				<SheetContent className='max-w-3xl'>
-					<SheetHeader>
-						<SheetTitle>
-							Logs {logsContainer ? `· ${logsContainer.name}` : ''}
-						</SheetTitle>
-						<SheetDescription>
-							{logsContainer ? logsContainer.status : 'Container output'}
-						</SheetDescription>
-					</SheetHeader>
+				<SheetContent className='h-full w-full max-w-4xl border-l border-zinc-800 bg-[#0b0f14] p-0 text-zinc-100 [&>button]:opacity-100 [&>button]:text-zinc-200 [&>button]:hover:bg-white/10 [&>button]:hover:text-zinc-100 [&>button]:focus:ring-zinc-500'>
+					<div className='flex h-full flex-col'>
+						<div className='sticky top-0 z-10 border-b border-zinc-800 bg-[#0b0f14] px-5 py-4'>
+							<div className='flex items-center justify-between gap-3'>
+								<SheetHeader className='space-y-0'>
+									<SheetTitle className='text-zinc-100'>
+										Logs {logsContainer ? `· ${logsContainer.name}` : ''}
+									</SheetTitle>
+									<SheetDescription className='text-zinc-400'>
+										{logsContainer ? logsContainer.status : 'Container output'}
+									</SheetDescription>
+								</SheetHeader>
+								<Button
+									size='sm'
+									variant='outline'
+									className='border-zinc-700 bg-zinc-900/40 text-zinc-100 hover:bg-zinc-900 hover:text-zinc-100'
+									onClick={() =>
+										logsContainer
+											? void fetchContainerLogs(logsContainer, logsTail)
+											: undefined
+									}
+									disabled={!logsContainer || isLogsLoading}
+								>
+									Refresh
+								</Button>
+							</div>
+						</div>
 
-					<div className='mt-4 flex flex-wrap items-center gap-2'>
-						<Select
-							value={String(logsTail)}
-							onChange={event => setLogsTail(Number(event.target.value))}
-							className='w-32'
-						>
-							<option value='50'>Tail 50</option>
-							<option value='200'>Tail 200</option>
-							<option value='500'>Tail 500</option>
-						</Select>
-						<Button
-							size='sm'
-							variant='outline'
-							onClick={() =>
-								logsContainer
-									? void fetchContainerLogs(logsContainer, logsTail)
-									: undefined
-							}
-							disabled={!logsContainer || isLogsLoading}
-						>
-							Refresh logs
-						</Button>
-						<Button
-							size='sm'
-							variant='outline'
-							onClick={() => void copyLogs()}
-							disabled={!logsText}
-						>
-							<Copy className='mr-2 h-4 w-4' />
-							Copy
-						</Button>
-					</div>
+						<div className='px-5 py-3'>
+							<div className='flex flex-wrap items-center gap-2'>
+								<Select
+									value={String(logsTail)}
+									onChange={event => setLogsTail(Number(event.target.value))}
+									className='w-32 border-zinc-700 bg-zinc-900/40 text-zinc-100'
+								>
+									<option value='50'>Tail 50</option>
+									<option value='200'>Tail 200</option>
+									<option value='500'>Tail 500</option>
+								</Select>
+								<Button
+									size='sm'
+									variant='outline'
+									className='border-zinc-700 bg-zinc-900/40 text-zinc-100 hover:bg-zinc-900 hover:text-zinc-100'
+									onClick={() => void copyLogs()}
+									disabled={!logsText}
+								>
+									<Copy className='mr-2 h-4 w-4' />
+									Copy
+								</Button>
+							</div>
+						</div>
 
-					<div className='mt-4 rounded-md border bg-muted/30 p-3'>
-						{isLogsLoading ? (
-							<p className='text-sm text-muted-foreground'>Loading logs...</p>
-						) : logsError ? (
-							<p className='text-sm text-destructive'>{logsError}</p>
-						) : (
-							<pre className='max-h-[65vh] overflow-auto whitespace-pre-wrap font-mono text-xs leading-relaxed'>
-								{logsText || 'No logs yet.'}
-							</pre>
-						)}
+						<div
+							ref={logsScrollRef}
+							className='mx-5 mb-5 flex-1 overflow-auto rounded-md border border-zinc-800 bg-[#0b0f14] p-3 font-mono'
+						>
+							{isLogsLoading ? (
+								<p className='text-sm text-zinc-400'>Loading logs...</p>
+							) : logsError ? (
+								<p className='text-sm text-zinc-300'>{logsError}</p>
+							) : (
+								<pre className='whitespace-pre-wrap text-xs leading-relaxed text-zinc-200'>
+									{logsText || 'No logs yet.'}
+								</pre>
+							)}
+						</div>
 					</div>
 				</SheetContent>
 			</Sheet>

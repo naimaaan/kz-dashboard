@@ -4,7 +4,36 @@ import { HostStatsDto } from './host-stats.dto'
 
 @Injectable()
 export class StatsService {
-	getHostStats(): HostStatsDto {
+	private sumCpuTimes(cpus: os.CpuInfo[]) {
+		let idle = 0
+		let total = 0
+
+		for (const cpu of cpus) {
+			const times = cpu.times
+			idle += times.idle
+			total += times.user + times.nice + times.sys + times.idle + times.irq
+		}
+
+		return { idle, total }
+	}
+
+	private async getCpuPercent(): Promise<number> {
+		const first = this.sumCpuTimes(os.cpus())
+		await new Promise(resolve => setTimeout(resolve, 500))
+		const second = this.sumCpuTimes(os.cpus())
+
+		const idleDiff = second.idle - first.idle
+		const totalDiff = second.total - first.total
+
+		if (totalDiff <= 0) {
+			return 0
+		}
+
+		const cpuPercent = 100 - (idleDiff / totalDiff) * 100
+		return Math.round(cpuPercent * 10) / 10
+	}
+
+	async getHostStats(): Promise<HostStatsDto> {
 		try {
 			const totalMemBytes = os.totalmem()
 			const freeMemBytes = os.freemem()
@@ -12,13 +41,10 @@ export class StatsService {
 			const usedMemPercent =
 				totalMemBytes > 0 ? (usedMemBytes / totalMemBytes) * 100 : 0
 			const uptimeSeconds = os.uptime()
-
-			const cpuLoad =
-				process.platform === 'win32' ? null : (os.loadavg()[0] ?? null)
+			const cpuPercent = await this.getCpuPercent()
 
 			return {
-				cpuLoad,
-				cpuLoadNote: cpuLoad === null ? 'N/A on Windows' : undefined,
+				cpuPercent,
 				totalMemBytes,
 				freeMemBytes,
 				usedMemBytes,

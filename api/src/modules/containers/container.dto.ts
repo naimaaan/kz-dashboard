@@ -4,4 +4,6 @@ export interface ContainerDto {
 	image: string
 	state: string
 	status: string
+	labels: Record<string, string>
+	cluster: string | null
 }

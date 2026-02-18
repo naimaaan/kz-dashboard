@@ -6,7 +6,7 @@ export class StatsController {
 	constructor(private readonly statsService: StatsService) {}
 
 	@Get('host')
-	getHostStats() {
+	async getHostStats() {
 		return this.statsService.getHostStats()
 	}
 }

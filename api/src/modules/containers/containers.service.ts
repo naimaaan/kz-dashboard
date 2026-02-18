@@ -37,6 +37,10 @@ const protectedContainers = new Set(
 )
 
 const BULK_CONCURRENCY = 5
+const CLUSTER_PROTECTED_CONTAINERS = new Set([
+	'kz-dashboard-api',
+	'kz-dashboard-web',
+])
 
 type BulkAction = 'start' | 'stop' | 'restart'
 
@@ -46,6 +50,7 @@ interface DockerContainerSummary {
 	Image: string
 	State: string
 	Status: string
+	Labels?: Record<string, string>
 }
 
 interface DockerStatsSnapshot {
@@ -165,14 +170,75 @@ export class ContainersService {
 		return this.executeBulkAction('restart', input)
 	}
 
+	async startCluster(cluster: string): Promise<BulkActionResultDto> {
+		return this.executeClusterAction(cluster, 'start')
+	}
+
+	async stopCluster(cluster: string): Promise<BulkActionResultDto> {
+		return this.executeClusterAction(cluster, 'stop')
+	}
+
+	async restartCluster(cluster: string): Promise<BulkActionResultDto> {
+		return this.executeClusterAction(cluster, 'restart')
+	}
+
 	private toContainerDto(container: DockerContainerSummary): ContainerDto {
+		const labels = container.Labels ?? {}
+		const name = container.Names?.[0]?.replace(/^\//, '') ?? container.Id
+
 		return {
 			id: container.Id,
-			name: container.Names?.[0]?.replace(/^\//, '') ?? container.Id,
+			name,
 			image: container.Image,
 			state: container.State,
 			status: container.Status,
+			labels,
+			cluster: this.resolveCluster(labels, name),
 		}
+	}
+
+	private resolveCluster(
+		labels: Record<string, string>,
+		containerName: string,
+	): string | null {
+		const explicitCluster = labels['kz.cluster']?.trim()
+		if (explicitCluster) {
+			return explicitCluster
+		}
+
+		const composeProject = labels['com.docker.compose.project']?.trim()
+		if (composeProject) {
+			return composeProject
+		}
+
+		const normalizedName = containerName.toLowerCase()
+		if (
+			normalizedName.includes('zabbix') ||
+			normalizedName.includes('grafana') ||
+			normalizedName.includes('prometheus') ||
+			normalizedName.includes('loki')
+		) {
+			return 'monitoring'
+		}
+
+		if (
+			normalizedName.includes('elastic') ||
+			normalizedName.includes('kibana') ||
+			normalizedName.includes('graylog')
+		) {
+			return 'logging'
+		}
+
+		if (
+			normalizedName.includes('mysql') ||
+			normalizedName.includes('postgres') ||
+			normalizedName.includes('mongo') ||
+			normalizedName.includes('redis')
+		) {
+			return 'databases'
+		}
+
+		return 'other'
 	}
 
 	private toContainerStatsDto(stats: DockerStatsSnapshot): ContainerStatsDto {
@@ -216,6 +282,49 @@ export class ContainersService {
 	): Promise<BulkActionResultDto> {
 		const allContainers = await this.listContainerSummaries()
 		const targets = this.resolveBulkTargets(allContainers, input)
+
+		const failed: BulkActionFailureDto[] = []
+		const succeeded: string[] = []
+
+		await this.runWithConcurrency(targets, BULK_CONCURRENCY, async target => {
+			try {
+				await this.applyContainerAction(target.Id, action)
+				succeeded.push(target.Id)
+			} catch (error) {
+				failed.push({
+					id: target.Id,
+					name: this.getContainerName(target),
+					error: error instanceof Error ? error.message : 'Unknown error',
+				})
+			}
+		})
+
+		return {
+			ok: true,
+			total: targets.length,
+			succeeded,
+			failed,
+		}
+	}
+
+	private async executeClusterAction(
+		cluster: string,
+		action: BulkAction,
+	): Promise<BulkActionResultDto> {
+		const normalizedCluster = decodeURIComponent(cluster).trim().toLowerCase()
+		const allContainers = await this.listContainerSummaries()
+
+		const targets = allContainers.filter(container => {
+			const name = this.getContainerName(container)
+			const labels = container.Labels ?? {}
+			const resolvedCluster = this.resolveCluster(labels, name)
+
+			return (
+				resolvedCluster !== null &&
+				resolvedCluster.toLowerCase() === normalizedCluster &&
+				!CLUSTER_PROTECTED_CONTAINERS.has(name.toLowerCase())
+			)
+		})
 
 		const failed: BulkActionFailureDto[] = []
 		const succeeded: string[] = []

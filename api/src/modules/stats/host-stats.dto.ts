@@ -1,6 +1,5 @@
 export interface HostStatsDto {
-	cpuLoad: number | null
-	cpuLoadNote?: string
+	cpuPercent: number
 	totalMemBytes: number
 	freeMemBytes: number
 	usedMemBytes: number
