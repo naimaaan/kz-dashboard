@@ -13,7 +13,8 @@ export class StatsService {
 				totalMemBytes > 0 ? (usedMemBytes / totalMemBytes) * 100 : 0
 			const uptimeSeconds = os.uptime()
 
-			const cpuLoad = process.platform === 'win32' ? null : os.loadavg()[0] ?? null
+			const cpuLoad =
+				process.platform === 'win32' ? null : (os.loadavg()[0] ?? null)
 
 			return {
 				cpuLoad,

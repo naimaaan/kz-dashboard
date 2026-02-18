@@ -1,4 +1,8 @@
-import { BadGatewayException, Injectable, NotFoundException } from '@nestjs/common'
+import {
+	BadGatewayException,
+	Injectable,
+	NotFoundException,
+} from '@nestjs/common'
 import * as Docker from 'dockerode'
 import { ContainerDto } from './container.dto'
 import { ContainerStatsDto } from './container-stats.dto'
@@ -116,6 +120,35 @@ export class ContainersService {
 		} catch (error) {
 			throw new BadGatewayException(
 				error instanceof Error ? error.message : 'Container stats unavailable',
+			)
+		}
+	}
+
+	async getContainerLogs(id: string, tail = 200): Promise<string> {
+		const parsedTail = Number.isFinite(tail)
+			? Math.max(1, Math.min(2000, Math.trunc(tail)))
+			: 200
+
+		try {
+			const container = this.docker.getContainer(id)
+			await this.assertExists(id)
+
+			const output = (await container.logs({
+				stdout: true,
+				stderr: true,
+				timestamps: true,
+				tail: parsedTail,
+				follow: false,
+			})) as Buffer | string
+
+			if (typeof output === 'string') {
+				return output
+			}
+
+			return this.decodeDockerLogs(output)
+		} catch (error) {
+			throw new BadGatewayException(
+				error instanceof Error ? error.message : 'Container logs unavailable',
 			)
 		}
 	}
@@ -292,5 +325,28 @@ export class ContainersService {
 		} catch {
 			throw new NotFoundException(`Container not found: ${id}`)
 		}
+	}
+
+	private decodeDockerLogs(buffer: Buffer): string {
+		let offset = 0
+		const chunks: Buffer[] = []
+
+		while (offset + 8 <= buffer.length) {
+			const payloadLength = buffer.readUInt32BE(offset + 4)
+			offset += 8
+
+			if (offset + payloadLength > buffer.length) {
+				break
+			}
+
+			chunks.push(buffer.subarray(offset, offset + payloadLength))
+			offset += payloadLength
+		}
+
+		if (chunks.length === 0) {
+			return buffer.toString('utf8')
+		}
+
+		return Buffer.concat(chunks).toString('utf8')
 	}
 }

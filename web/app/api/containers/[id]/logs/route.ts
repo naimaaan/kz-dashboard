@@ -6,14 +6,20 @@ const BACKEND =
 	'http://localhost:3001'
 
 export async function GET(
-	_request: Request,
+	request: Request,
 	{ params }: { params: Promise<{ id: string }> },
 ) {
 	const { id } = await params
+	const { searchParams } = new URL(request.url)
+	const tail = searchParams.get('tail') ?? '200'
+
 	try {
-		const response = await fetch(`${BACKEND}/containers/${id}/stats`, {
-			cache: 'no-store',
-		})
+		const response = await fetch(
+			`${BACKEND}/containers/${id}/logs?tail=${encodeURIComponent(tail)}`,
+			{
+				cache: 'no-store',
+			},
+		)
 
 		const body = await response.text()
 

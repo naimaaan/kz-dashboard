@@ -8,9 +8,9 @@ const BACKEND =
 
 export async function POST(
 	_request: Request,
-	{ params }: { params: { id: string; action: string } },
+	{ params }: { params: Promise<{ id: string; action: string }> },
 ) {
-	const { id, action } = params
+	const { id, action } = await params
 
 	if (!allowedActions.has(action)) {
 		return NextResponse.json({ message: 'Invalid action' }, { status: 400 })

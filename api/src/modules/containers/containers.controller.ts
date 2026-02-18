@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common'
+import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common'
 import { BulkActionDto } from './bulk-action.dto'
 import { ContainersService } from './containers.service'
 
@@ -44,5 +44,15 @@ export class ContainersController {
 	@Get(':id/stats')
 	getContainerStats(@Param('id') id: string) {
 		return this.containersService.getContainerStats(id)
+	}
+
+	@Get(':id/logs')
+	async getContainerLogs(
+		@Param('id') id: string,
+		@Query('tail') tail?: string,
+	) {
+		const parsedTail = tail ? Number.parseInt(tail, 10) : 200
+		const text = await this.containersService.getContainerLogs(id, parsedTail)
+		return { text }
 	}
 }

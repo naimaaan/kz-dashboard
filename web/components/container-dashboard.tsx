@@ -1,11 +1,34 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import {
+	Boxes,
+	Copy,
+	Menu,
+	Play,
+	RefreshCw,
+	RotateCcw,
+	ScrollText,
+	Settings,
+	Square,
+	Wrench,
+} from 'lucide-react'
+import { toast } from 'sonner'
+import { ThemeToggle } from '@/components/theme-toggle'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { Progress } from '@/components/ui/progress'
 import { Select } from '@/components/ui/select'
+import {
+	Sheet,
+	SheetContent,
+	SheetDescription,
+	SheetHeader,
+	SheetTitle,
+	SheetTrigger,
+} from '@/components/ui/sheet'
 
 export interface ContainerItem {
 	id: string
@@ -33,6 +56,10 @@ interface ContainerStatsSnapshot {
 	pids: number | null
 }
 
+interface LogsResponse {
+	text: string
+}
+
 type StatusFilter = 'all' | 'running' | 'stopped' | 'restarting'
 type BulkAction = 'start' | 'stop' | 'restart'
 
@@ -41,6 +68,13 @@ interface BulkActionResult {
 	total: number
 	succeeded: string[]
 	failed: Array<{ id: string; name: string; error: string }>
+}
+
+interface SummaryCard {
+	label: string
+	value: number
+	filter: StatusFilter
+	icon: typeof Boxes
 }
 
 export function ContainerDashboard() {
@@ -58,6 +92,13 @@ export function ContainerDashboard() {
 	)
 	const [searchQuery, setSearchQuery] = useState('')
 	const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+	const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null)
+	const [isLogsOpen, setIsLogsOpen] = useState(false)
+	const [logsContainer, setLogsContainer] = useState<ContainerItem | null>(null)
+	const [logsText, setLogsText] = useState('')
+	const [logsTail, setLogsTail] = useState(200)
+	const [isLogsLoading, setIsLogsLoading] = useState(false)
+	const [logsError, setLogsError] = useState<string | null>(null)
 
 	const summary = useMemo(() => {
 		let running = 0
@@ -88,6 +129,38 @@ export function ContainerDashboard() {
 			restarting,
 		}
 	}, [containers])
+
+	const isBusy = pendingKey !== null || pendingBulkAction !== null
+
+	const summaryCards = useMemo<SummaryCard[]>(
+		() => [
+			{
+				label: 'Total containers',
+				value: summary.total,
+				filter: 'all',
+				icon: Boxes,
+			},
+			{
+				label: 'Running',
+				value: summary.running,
+				filter: 'running',
+				icon: Play,
+			},
+			{
+				label: 'Stopped',
+				value: summary.stopped,
+				filter: 'stopped',
+				icon: Square,
+			},
+			{
+				label: 'Restarting',
+				value: summary.restarting,
+				filter: 'restarting',
+				icon: RotateCcw,
+			},
+		],
+		[summary],
+	)
 
 	const statusBadgeVariant = (container: ContainerItem) => {
 		const state = container.state.toLowerCase()
@@ -137,6 +210,22 @@ export function ContainerDashboard() {
 			.sort((first, second) => first.name.localeCompare(second.name))
 	}, [containers, searchQuery, statusFilter])
 
+	const hostCpuPercent = useMemo(() => {
+		if (!hostStats || hostStats.cpuLoad === null) {
+			return null
+		}
+
+		return Math.min(100, Math.max(0, hostStats.cpuLoad * 100))
+	}, [hostStats])
+
+	const lastUpdatedText = useMemo(() => {
+		if (!lastUpdatedAt) {
+			return 'Not synced yet'
+		}
+
+		return lastUpdatedAt.toLocaleTimeString()
+	}, [lastUpdatedAt])
+
 	const refreshContainers = async (showLoader = false) => {
 		if (showLoader) {
 			setIsLoading(true)
@@ -149,8 +238,11 @@ export function ContainerDashboard() {
 			}
 			const data = (await response.json()) as ContainerItem[]
 			setContainers(data)
+			setLastUpdatedAt(new Date())
+			return true
 		} catch {
 			setErrorMessage('Failed to load containers. Please try again.')
+			return false
 		} finally {
 			setIsLoading(false)
 		}
@@ -192,7 +284,9 @@ export function ContainerDashboard() {
 		await Promise.all(workers)
 	}
 
-	const fetchVisibleContainerStats = async (visibleContainers: ContainerItem[]) => {
+	const fetchVisibleContainerStats = async (
+		visibleContainers: ContainerItem[],
+	) => {
 		if (visibleContainers.length === 0) {
 			return
 		}
@@ -222,9 +316,92 @@ export function ContainerDashboard() {
 
 	const formatMb = (bytes: number) => `${(bytes / (1024 * 1024)).toFixed(0)} MB`
 
+	const parseLogsPayload = async (response: Response) => {
+		const contentType = response.headers.get('content-type') ?? ''
+
+		if (contentType.includes('application/json')) {
+			const parsed = (await response.json()) as LogsResponse
+			return parsed.text ?? ''
+		}
+
+		return response.text()
+	}
+
+	const formatMemory = (bytes: number) => {
+		const gb = bytes / (1024 * 1024 * 1024)
+		if (gb >= 1) {
+			return `${gb.toFixed(1)} GB`
+		}
+		return formatMb(bytes)
+	}
+
+	const lifecycleState = (container: ContainerItem) => {
+		const state = container.state.toLowerCase()
+		const status = container.status.toLowerCase()
+
+		if (state === 'restarting' || status.includes('restarting')) {
+			return 'restarting' as const
+		}
+
+		if (state === 'running') {
+			return 'running' as const
+		}
+
+		return 'stopped' as const
+	}
+
+	const refreshAll = async (showLoader = false) => {
+		await Promise.all([refreshContainers(showLoader), fetchHostStats()])
+		await fetchVisibleContainerStats(filteredContainers)
+	}
+
+	const fetchContainerLogs = async (container: ContainerItem, tail: number) => {
+		setIsLogsLoading(true)
+		setLogsError(null)
+
+		try {
+			const response = await fetch(
+				`/api/containers/${container.id}/logs?tail=${tail}`,
+				{ cache: 'no-store' },
+			)
+
+			if (!response.ok) {
+				throw new Error('Failed to fetch logs')
+			}
+
+			const text = await parseLogsPayload(response)
+			setLogsText(text)
+		} catch {
+			setLogsError('Failed to load logs. Try refresh.')
+			setLogsText('')
+		} finally {
+			setIsLogsLoading(false)
+		}
+	}
+
+	const openLogs = async (container: ContainerItem) => {
+		setLogsContainer(container)
+		setLogsText('')
+		setLogsError(null)
+		setIsLogsOpen(true)
+		await fetchContainerLogs(container, logsTail)
+	}
+
+	const copyLogs = async () => {
+		if (!logsText) {
+			return
+		}
+
+		try {
+			await navigator.clipboard.writeText(logsText)
+			toast.success('Logs copied')
+		} catch {
+			toast.error('Failed to copy logs')
+		}
+	}
+
 	useEffect(() => {
-		void refreshContainers(true)
-		void fetchHostStats()
+		void refreshAll(true)
 	}, [])
 
 	useEffect(() => {
@@ -237,9 +414,7 @@ export function ContainerDashboard() {
 		}
 
 		const intervalId = setInterval(() => {
-			void refreshContainers()
-			void fetchHostStats()
-			void fetchVisibleContainerStats(filteredContainers)
+			void refreshAll()
 		}, 5000)
 
 		return () => {
@@ -247,11 +422,42 @@ export function ContainerDashboard() {
 		}
 	}, [pendingKey, pendingBulkAction, filteredContainers])
 
+	useEffect(() => {
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key.toLowerCase() !== 'r' || event.ctrlKey || event.metaKey) {
+				return
+			}
+
+			const target = event.target as HTMLElement | null
+			if (!target) {
+				return
+			}
+
+			const tag = target.tagName.toLowerCase()
+			if (
+				tag === 'input' ||
+				tag === 'textarea' ||
+				tag === 'select' ||
+				target.isContentEditable
+			) {
+				return
+			}
+
+			event.preventDefault()
+			void refreshAll()
+		}
+
+		window.addEventListener('keydown', onKeyDown)
+		return () => window.removeEventListener('keydown', onKeyDown)
+	}, [filteredContainers])
+
 	const runAction = async (
 		id: string,
 		action: 'start' | 'stop' | 'restart',
 	) => {
 		const key = `${id}-${action}`
+		const containerName =
+			containers.find(container => container.id === id)?.name ?? 'Container'
 		setPendingKey(key)
 		setErrorMessage(null)
 		try {
@@ -261,9 +467,11 @@ export function ContainerDashboard() {
 			if (!response.ok) {
 				throw new Error(`Failed to ${action} container`)
 			}
+			toast.success(`${containerName}: ${action} queued`)
 			await refreshContainers()
 		} catch {
 			setErrorMessage(`Failed to ${action} container. Please try again.`)
+			toast.error(`${containerName}: failed to ${action}`)
 		} finally {
 			setPendingKey(null)
 		}
@@ -297,283 +505,472 @@ export function ContainerDashboard() {
 			}
 
 			const result = (await response.json()) as BulkActionResult
+			toast.success(
+				`Bulk ${action}: ${result.succeeded.length}/${result.total} succeeded`,
+			)
 			if (result.failed.length > 0) {
 				setErrorMessage(
 					`${result.failed.length} container(s) failed during bulk ${action}.`,
+				)
+				toast.error(
+					`Bulk ${action}: ${result.failed.length} container(s) failed`,
 				)
 			}
 
 			await refreshContainers()
 		} catch {
 			setErrorMessage(`Failed to ${action} containers. Please try again.`)
+			toast.error(`Bulk ${action} failed`)
 		} finally {
 			setPendingBulkAction(null)
 		}
 	}
 
+	const navItems = [
+		{ href: '#overview', label: 'Overview', icon: Boxes },
+		{ href: '#containers', label: 'Containers', icon: Wrench },
+		{ href: '#system', label: 'System', icon: ScrollText },
+		{ href: '#settings', label: 'Settings', icon: Settings },
+	]
+
 	return (
-		<div className='space-y-6'>
-			<div className='flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between'>
-				<div>
-					<h1 className='text-3xl font-semibold tracking-tight'>
-						KZ-Sploitable Dashboard
-					</h1>
-					<p className='mt-1 text-sm text-muted-foreground'>
-						Container operations overview and controls.
-					</p>
-				</div>
-				<div className='flex flex-wrap items-center gap-3'>
-					<Badge variant='default'>System Ready</Badge>
-					<Button
-						size='sm'
-						onClick={() => runBulkAction('start')}
-						disabled={
-							isLoading || pendingKey !== null || pendingBulkAction !== null
-						}
-					>
-						{pendingBulkAction === 'start' ? 'Starting all...' : 'Start All'}
-					</Button>
-					<Button
-						size='sm'
-						variant='outline'
-						onClick={() => runBulkAction('stop')}
-						disabled={
-							isLoading || pendingKey !== null || pendingBulkAction !== null
-						}
-					>
-						{pendingBulkAction === 'stop' ? 'Stopping all...' : 'Stop All'}
-					</Button>
-					<Button
-						size='sm'
-						variant='outline'
-						onClick={() => runBulkAction('restart')}
-						disabled={
-							isLoading || pendingKey !== null || pendingBulkAction !== null
-						}
-					>
-						{pendingBulkAction === 'restart'
-							? 'Restarting all...'
-							: 'Restart All'}
-					</Button>
-					<Button
-						variant='outline'
-						onClick={() => refreshContainers()}
-						disabled={
-							isLoading || pendingKey !== null || pendingBulkAction !== null
-						}
-					>
-						{isLoading ? 'Refreshing...' : 'Refresh'}
-					</Button>
-				</div>
-			</div>
-
-			<section className='space-y-3'>
-				<h2 className='text-lg font-semibold tracking-tight'>System</h2>
-				<div className='grid gap-4 md:grid-cols-2'>
-					<Card>
-						<CardHeader className='pb-2'>
-							<CardTitle className='text-sm'>Host RAM used</CardTitle>
-						</CardHeader>
-						<CardContent>
-							{hostStats ? (
-								<>
-									<p className='text-2xl font-semibold'>
-										{formatMb(hostStats.usedMemBytes)}
-									</p>
-									<p className='mt-1 text-sm text-muted-foreground'>
-										{hostStats.usedMemPercent.toFixed(1)}%
-									</p>
-								</>
-							) : (
-								<p className='text-sm text-muted-foreground'>
-									{hostStatsError ?? 'Loading...'}
-								</p>
-							)}
-						</CardContent>
-					</Card>
-
-					<Card>
-						<CardHeader className='pb-2'>
-							<CardTitle className='text-sm'>Host CPU load</CardTitle>
-						</CardHeader>
-						<CardContent>
-							{hostStats ? (
-								hostStats.cpuLoad === null ? (
-									<p className='text-sm text-muted-foreground'>
-										{hostStats.cpuLoadNote ?? 'N/A on Windows'}
-									</p>
-								) : (
-									<p className='text-2xl font-semibold'>
-										{hostStats.cpuLoad.toFixed(2)}
-									</p>
-								)
-							) : (
-								<p className='text-sm text-muted-foreground'>
-									{hostStatsError ?? 'Loading...'}
-								</p>
-							)}
-						</CardContent>
-					</Card>
-				</div>
-			</section>
-
-			<div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-4'>
-				<Card>
-					<CardHeader className='pb-2'>
-						<CardTitle className='text-sm'>Total containers</CardTitle>
-					</CardHeader>
-					<CardContent>
-						<p className='text-2xl font-semibold'>{summary.total}</p>
-					</CardContent>
-				</Card>
-				<Card>
-					<CardHeader className='pb-2'>
-						<CardTitle className='text-sm'>Running</CardTitle>
-					</CardHeader>
-					<CardContent>
-						<p className='text-2xl font-semibold'>{summary.running}</p>
-					</CardContent>
-				</Card>
-				<Card>
-					<CardHeader className='pb-2'>
-						<CardTitle className='text-sm'>Stopped</CardTitle>
-					</CardHeader>
-					<CardContent>
-						<p className='text-2xl font-semibold'>{summary.stopped}</p>
-					</CardContent>
-				</Card>
-				<Card>
-					<CardHeader className='pb-2'>
-						<CardTitle className='text-sm'>Restarting</CardTitle>
-					</CardHeader>
-					<CardContent>
-						<p className='text-2xl font-semibold'>{summary.restarting}</p>
-					</CardContent>
-				</Card>
-			</div>
-
-			<Card>
-				<CardContent className='pt-6'>
-					<div className='grid gap-3 md:grid-cols-[2fr_1fr]'>
-						<Input
-							placeholder='Search by container name or image'
-							value={searchQuery}
-							onChange={event => setSearchQuery(event.target.value)}
-						/>
-						<Select
-							value={statusFilter}
-							onChange={event =>
-								setStatusFilter(event.target.value as StatusFilter)
-							}
-						>
-							<option value='all'>All</option>
-							<option value='running'>Running</option>
-							<option value='stopped'>Exited/Stopped</option>
-							<option value='restarting'>Restarting</option>
-						</Select>
+		<div className='min-h-screen bg-muted/20'>
+			<div className='flex min-h-screen'>
+				<aside className='sticky top-0 hidden h-screen w-64 shrink-0 border-r bg-background/95 p-4 md:block'>
+					<div className='mb-6'>
+						<p className='text-xs uppercase tracking-widest text-muted-foreground'>
+							KZ Admin
+						</p>
+						<h2 className='mt-1 text-lg font-semibold'>Dashboard</h2>
 					</div>
-					<p className='mt-3 text-sm text-muted-foreground'>
-						Matched containers: {filteredContainers.length}
-					</p>
-				</CardContent>
-			</Card>
+					<nav className='space-y-1'>
+						{navItems.map(item => {
+							const Icon = item.icon
+							return (
+								<a
+									key={item.href}
+									href={item.href}
+									className='flex items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground'
+								>
+									<Icon className='h-4 w-4' />
+									{item.label}
+								</a>
+							)
+						})}
+					</nav>
+				</aside>
 
-			{errorMessage && (
-				<Card className='border-destructive/40'>
-					<CardContent className='flex items-center justify-between gap-3 pt-6'>
-						<p className='text-sm text-destructive'>{errorMessage}</p>
+				<div className='flex min-w-0 flex-1 flex-col'>
+					<header className='sticky top-0 z-20 border-b bg-background/90 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80 md:px-6'>
+						<div className='flex items-center justify-between gap-3'>
+							<div className='flex min-w-0 items-center gap-2'>
+								<Sheet>
+									<SheetTrigger asChild>
+										<Button variant='outline' size='sm' className='md:hidden'>
+											<Menu className='h-4 w-4' />
+										</Button>
+									</SheetTrigger>
+									<SheetContent className='max-w-xs p-4'>
+										<SheetHeader>
+											<SheetTitle>Navigation</SheetTitle>
+											<SheetDescription>Quick access sections</SheetDescription>
+										</SheetHeader>
+										<nav className='mt-5 space-y-1'>
+											{navItems.map(item => {
+												const Icon = item.icon
+												return (
+													<a
+														key={item.href}
+														href={item.href}
+														className='flex items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+													>
+														<Icon className='h-4 w-4' />
+														{item.label}
+													</a>
+												)
+											})}
+										</nav>
+									</SheetContent>
+								</Sheet>
+								<div className='min-w-0'>
+									<h1 className='truncate text-xl font-semibold'>
+										KZ-Sploitable Dashboard
+									</h1>
+									<p className='text-xs text-muted-foreground'>
+										Container operations overview and controls
+									</p>
+								</div>
+							</div>
+
+							<div className='flex items-center gap-2'>
+								<Badge variant='default'>System Ready</Badge>
+								<ThemeToggle />
+								<Button
+									variant='outline'
+									size='sm'
+									onClick={() => void refreshAll()}
+									disabled={isLoading || isBusy}
+								>
+									<RefreshCw className='mr-2 h-4 w-4' />
+									Refresh
+								</Button>
+							</div>
+						</div>
+						<p className='mt-2 text-xs text-muted-foreground'>
+							Last updated: {lastUpdatedText} · Press R to refresh
+						</p>
+					</header>
+
+					<main className='space-y-6 p-4 md:p-6'>
+						<section id='overview' className='space-y-4'>
+							<div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-4'>
+								{summaryCards.map(card => {
+									const Icon = card.icon
+									const isActive = statusFilter === card.filter
+
+									return (
+										<Card
+											key={card.label}
+											className={isActive ? 'ring-2 ring-primary' : ''}
+										>
+											<button
+												type='button'
+												onClick={() => setStatusFilter(card.filter)}
+												className='w-full text-left'
+											>
+												<CardHeader className='pb-2'>
+													<div className='flex items-center justify-between'>
+														<CardTitle className='text-sm'>
+															{card.label}
+														</CardTitle>
+														<Icon className='h-4 w-4 text-muted-foreground' />
+													</div>
+												</CardHeader>
+												<CardContent>
+													<p className='text-2xl font-semibold'>{card.value}</p>
+												</CardContent>
+											</button>
+										</Card>
+									)
+								})}
+							</div>
+
+							<div className='flex flex-wrap items-center gap-2'>
+								<Button
+									size='sm'
+									onClick={() => runBulkAction('start')}
+									disabled={isLoading || isBusy}
+								>
+									{pendingBulkAction === 'start'
+										? 'Starting all...'
+										: 'Start All'}
+								</Button>
+								<Button
+									size='sm'
+									variant='destructive'
+									onClick={() => runBulkAction('stop')}
+									disabled={isLoading || isBusy}
+								>
+									{pendingBulkAction === 'stop'
+										? 'Stopping all...'
+										: 'Stop All'}
+								</Button>
+								<Button
+									size='sm'
+									variant='secondary'
+									onClick={() => runBulkAction('restart')}
+									disabled={isLoading || isBusy}
+								>
+									{pendingBulkAction === 'restart'
+										? 'Restarting all...'
+										: 'Restart All'}
+								</Button>
+							</div>
+						</section>
+
+						<section id='containers' className='space-y-4'>
+							<div className='flex flex-col gap-3 lg:flex-row lg:items-center'>
+								<Input
+									placeholder='Search by container name or image'
+									value={searchQuery}
+									onChange={event => setSearchQuery(event.target.value)}
+									className='lg:max-w-xl'
+								/>
+								<Select
+									value={statusFilter}
+									onChange={event =>
+										setStatusFilter(event.target.value as StatusFilter)
+									}
+									className='lg:w-64'
+								>
+									<option value='all'>All</option>
+									<option value='running'>Running</option>
+									<option value='stopped'>Exited/Stopped</option>
+									<option value='restarting'>Restarting</option>
+								</Select>
+								<p className='text-sm text-muted-foreground lg:ml-auto'>
+									Matched: {filteredContainers.length}
+								</p>
+							</div>
+
+							{errorMessage && (
+								<Card className='border-destructive/40'>
+									<CardContent className='flex items-center justify-between gap-3 pt-6'>
+										<p className='text-sm text-destructive'>{errorMessage}</p>
+										<Button
+											size='sm'
+											variant='outline'
+											onClick={() => void refreshAll()}
+										>
+											Try again
+										</Button>
+									</CardContent>
+								</Card>
+							)}
+
+							{isLoading ? (
+								<Card>
+									<CardContent className='pt-6'>
+										<p className='text-sm text-muted-foreground'>
+											Loading containers...
+										</p>
+									</CardContent>
+								</Card>
+							) : filteredContainers.length === 0 ? (
+								<Card>
+									<CardContent className='pt-6'>
+										<p className='text-sm text-muted-foreground'>
+											No containers match the current filters.
+										</p>
+									</CardContent>
+								</Card>
+							) : (
+								<div className='grid gap-4 md:grid-cols-2 xl:grid-cols-3'>
+									{filteredContainers.map(container => {
+										const state = lifecycleState(container)
+										const startDisabled = state !== 'stopped' || isBusy
+										const stopDisabled = state === 'stopped' || isBusy
+										const restartDisabled = state !== 'running' || isBusy
+
+										return (
+											<Card key={container.id} className='overflow-hidden'>
+												<CardHeader>
+													<div className='flex items-center justify-between gap-3'>
+														<CardTitle className='truncate text-base'>
+															{container.name}
+														</CardTitle>
+														<Badge variant={statusBadgeVariant(container)}>
+															{container.status}
+														</Badge>
+													</div>
+												</CardHeader>
+												<CardContent className='space-y-4'>
+													<p className='truncate font-mono text-xs text-muted-foreground'>
+														{container.image}
+													</p>
+													{containerStatsById[container.id] && (
+														<div className='flex flex-wrap gap-2'>
+															<Badge variant='secondary'>
+																CPU{' '}
+																{containerStatsById[
+																	container.id
+																].cpuPercent.toFixed(1)}
+																%
+															</Badge>
+															<Badge variant='secondary'>
+																RAM{' '}
+																{formatMb(
+																	containerStatsById[container.id]
+																		.memUsageBytes,
+																)}
+															</Badge>
+														</div>
+													)}
+
+													<div className='flex flex-wrap gap-2'>
+														<Button
+															size='sm'
+															onClick={() => runAction(container.id, 'start')}
+															disabled={startDisabled}
+														>
+															{pendingKey === `${container.id}-start`
+																? 'Starting...'
+																: 'Start'}
+														</Button>
+														<Button
+															size='sm'
+															variant='destructive'
+															onClick={() => runAction(container.id, 'stop')}
+															disabled={stopDisabled}
+														>
+															{pendingKey === `${container.id}-stop`
+																? 'Stopping...'
+																: 'Stop'}
+														</Button>
+														<Button
+															size='sm'
+															variant='secondary'
+															onClick={() => runAction(container.id, 'restart')}
+															disabled={restartDisabled}
+														>
+															{pendingKey === `${container.id}-restart`
+																? 'Restarting...'
+																: 'Restart'}
+														</Button>
+														<Button
+															size='sm'
+															variant='outline'
+															onClick={() => void openLogs(container)}
+														>
+															Logs
+														</Button>
+													</div>
+												</CardContent>
+											</Card>
+										)
+									})}
+								</div>
+							)}
+						</section>
+
+						<section id='system' className='space-y-3'>
+							<h2 className='text-lg font-semibold tracking-tight'>System</h2>
+							<div className='grid gap-4 md:grid-cols-2'>
+								<Card>
+									<CardHeader className='pb-2'>
+										<CardTitle className='text-sm'>Host RAM used</CardTitle>
+									</CardHeader>
+									<CardContent className='space-y-3'>
+										{hostStats ? (
+											<>
+												<div className='flex items-end justify-between gap-3'>
+													<p className='text-2xl font-semibold'>
+														{hostStats.usedMemPercent.toFixed(1)}%
+													</p>
+													<p className='text-xs text-muted-foreground'>
+														{formatMemory(hostStats.usedMemBytes)} /{' '}
+														{formatMemory(hostStats.totalMemBytes)}
+													</p>
+												</div>
+												<Progress value={hostStats.usedMemPercent} />
+												<p className='text-sm text-muted-foreground'>
+													{hostStats.usedMemPercent.toFixed(1)}%
+												</p>
+											</>
+										) : (
+											<p className='text-sm text-muted-foreground'>
+												{hostStatsError ?? 'Loading...'}
+											</p>
+										)}
+									</CardContent>
+								</Card>
+
+								<Card>
+									<CardHeader className='pb-2'>
+										<CardTitle className='text-sm'>Host CPU load</CardTitle>
+									</CardHeader>
+									<CardContent className='space-y-3'>
+										{hostStats ? (
+											hostStats.cpuLoad === null ? (
+												<p className='text-sm text-muted-foreground'>
+													{hostStats.cpuLoadNote ?? 'N/A on Windows'}
+												</p>
+											) : (
+												<>
+													<div className='flex items-end justify-between gap-3'>
+														<p className='text-2xl font-semibold'>
+															{hostCpuPercent?.toFixed(1)}%
+														</p>
+														<p className='text-xs text-muted-foreground'>
+															Load avg {hostStats.cpuLoad.toFixed(2)}
+														</p>
+													</div>
+													<Progress value={hostCpuPercent ?? 0} />
+												</>
+											)
+										) : (
+											<p className='text-sm text-muted-foreground'>
+												{hostStatsError ?? 'Loading...'}
+											</p>
+										)}
+									</CardContent>
+								</Card>
+							</div>
+						</section>
+
+						<section id='settings'>
+							<Card>
+								<CardHeader>
+									<CardTitle className='text-sm'>Settings</CardTitle>
+								</CardHeader>
+								<CardContent>
+									<p className='text-sm text-muted-foreground'>
+										Settings panel placeholder.
+									</p>
+								</CardContent>
+							</Card>
+						</section>
+					</main>
+				</div>
+			</div>
+
+			<Sheet open={isLogsOpen} onOpenChange={setIsLogsOpen}>
+				<SheetContent className='max-w-3xl'>
+					<SheetHeader>
+						<SheetTitle>
+							Logs {logsContainer ? `· ${logsContainer.name}` : ''}
+						</SheetTitle>
+						<SheetDescription>
+							{logsContainer ? logsContainer.status : 'Container output'}
+						</SheetDescription>
+					</SheetHeader>
+
+					<div className='mt-4 flex flex-wrap items-center gap-2'>
+						<Select
+							value={String(logsTail)}
+							onChange={event => setLogsTail(Number(event.target.value))}
+							className='w-32'
+						>
+							<option value='50'>Tail 50</option>
+							<option value='200'>Tail 200</option>
+							<option value='500'>Tail 500</option>
+						</Select>
 						<Button
 							size='sm'
 							variant='outline'
-							onClick={() => refreshContainers()}
+							onClick={() =>
+								logsContainer
+									? void fetchContainerLogs(logsContainer, logsTail)
+									: undefined
+							}
+							disabled={!logsContainer || isLogsLoading}
 						>
-							Try again
+							Refresh logs
 						</Button>
-					</CardContent>
-				</Card>
-			)}
+						<Button
+							size='sm'
+							variant='outline'
+							onClick={() => void copyLogs()}
+							disabled={!logsText}
+						>
+							<Copy className='mr-2 h-4 w-4' />
+							Copy
+						</Button>
+					</div>
 
-			{isLoading ? (
-				<Card>
-					<CardContent className='pt-6'>
-						<p className='text-sm text-muted-foreground'>
-							Loading containers...
-						</p>
-					</CardContent>
-				</Card>
-			) : filteredContainers.length === 0 ? (
-				<Card>
-					<CardContent className='pt-6'>
-						<p className='text-sm text-muted-foreground'>
-							No containers match the current filters.
-						</p>
-					</CardContent>
-				</Card>
-			) : (
-				<div className='grid gap-4 md:grid-cols-2 xl:grid-cols-3'>
-					{filteredContainers.map(container => (
-						<Card key={container.id}>
-							<CardHeader>
-								<div className='flex items-center justify-between gap-3'>
-									<CardTitle className='truncate text-base'>
-										{container.name}
-									</CardTitle>
-									<Badge variant={statusBadgeVariant(container)}>
-										{container.status}
-									</Badge>
-								</div>
-							</CardHeader>
-							<CardContent className='space-y-4'>
-								<p className='truncate text-sm text-muted-foreground'>
-									{container.image}
-								</p>
-								{containerStatsById[container.id] && (
-									<div className='flex flex-wrap gap-2'>
-										<Badge variant='secondary'>
-											CPU {containerStatsById[container.id].cpuPercent.toFixed(1)}%
-										</Badge>
-										<Badge variant='secondary'>
-											RAM{' '}
-											{formatMb(containerStatsById[container.id].memUsageBytes)}
-										</Badge>
-									</div>
-								)}
-								<div className='flex flex-wrap gap-2'>
-									<Button
-										size='sm'
-										onClick={() => runAction(container.id, 'start')}
-										disabled={pendingKey !== null}
-									>
-										{pendingKey === `${container.id}-start`
-											? 'Starting...'
-											: 'Start'}
-									</Button>
-									<Button
-										size='sm'
-										variant='outline'
-										onClick={() => runAction(container.id, 'stop')}
-										disabled={pendingKey !== null}
-									>
-										{pendingKey === `${container.id}-stop`
-											? 'Stopping...'
-											: 'Stop'}
-									</Button>
-									<Button
-										size='sm'
-										variant='outline'
-										onClick={() => runAction(container.id, 'restart')}
-										disabled={pendingKey !== null}
-									>
-										{pendingKey === `${container.id}-restart`
-											? 'Restarting...'
-											: 'Restart'}
-									</Button>
-								</div>
-							</CardContent>
-						</Card>
-					))}
-				</div>
-			)}
+					<div className='mt-4 rounded-md border bg-muted/30 p-3'>
+						{isLogsLoading ? (
+							<p className='text-sm text-muted-foreground'>Loading logs...</p>
+						) : logsError ? (
+							<p className='text-sm text-destructive'>{logsError}</p>
+						) : (
+							<pre className='max-h-[65vh] overflow-auto whitespace-pre-wrap font-mono text-xs leading-relaxed'>
+								{logsText || 'No logs yet.'}
+							</pre>
+						)}
+					</div>
+				</SheetContent>
+			</Sheet>
 		</div>
 	)
 }
