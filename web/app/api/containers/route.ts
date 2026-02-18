@@ -1,17 +1,29 @@
 import { NextResponse } from 'next/server'
 
+const BACKEND =
+	process.env.BACKEND_URL ||
+	process.env.NEXT_PUBLIC_API_BASE ||
+	'http://localhost:3001'
+
 export async function GET() {
-	const response = await fetch('http://dashboard-api:3001/containers', {
-		cache: 'no-store',
-	})
+	try {
+		const response = await fetch(`${BACKEND}/containers`, {
+			cache: 'no-store',
+		})
 
-	const body = await response.text()
+		const body = await response.text()
 
-	return new NextResponse(body, {
-		status: response.status,
-		headers: {
-			'content-type':
-				response.headers.get('content-type') ?? 'application/json',
-		},
-	})
+		return new NextResponse(body, {
+			status: response.status,
+			headers: {
+				'content-type':
+					response.headers.get('content-type') ?? 'application/json',
+			},
+		})
+	} catch {
+		return NextResponse.json(
+			{ message: 'Failed to reach backend service' },
+			{ status: 502 },
+		)
+	}
 }

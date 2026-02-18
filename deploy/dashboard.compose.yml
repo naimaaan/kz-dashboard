@@ -14,6 +14,8 @@ services:
       context: ../web
     container_name: dashboard-web
     restart: unless-stopped
+    environment:
+      BACKEND_URL: http://dashboard-api:3001
     depends_on:
       - dashboard-api
     ports:

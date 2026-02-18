@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server'
 
 const allowedActions = new Set(['start', 'stop', 'restart'])
+const BACKEND =
+	process.env.BACKEND_URL ||
+	process.env.NEXT_PUBLIC_API_BASE ||
+	'http://localhost:3001'
 
 export async function POST(
 	_request: Request,
@@ -12,13 +16,10 @@ export async function POST(
 		return NextResponse.json({ message: 'Invalid action' }, { status: 400 })
 	}
 
-	const response = await fetch(
-		`http://dashboard-api:3001/containers/${id}/${action}`,
-		{
-			method: 'POST',
-			cache: 'no-store',
-		},
-	)
+	const response = await fetch(`${BACKEND}/containers/${id}/${action}`, {
+		method: 'POST',
+		cache: 'no-store',
+	})
 
 	const body = await response.text()
 
