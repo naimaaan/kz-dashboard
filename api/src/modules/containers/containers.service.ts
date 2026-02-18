@@ -1,6 +1,12 @@
 import { Injectable, NotFoundException } from '@nestjs/common'
-import Docker = require('dockerode')
+import * as Docker from 'dockerode'
 import { ContainerDto } from './container.dto'
+
+const isWin = process.platform === 'win32'
+
+const docker = isWin
+	? new Docker({ socketPath: '//./pipe/docker_engine' })
+	: new Docker({ socketPath: '/var/run/docker.sock' })
 
 interface DockerContainerSummary {
 	Id: string
@@ -12,11 +18,16 @@ interface DockerContainerSummary {
 
 @Injectable()
 export class ContainersService {
-	private readonly docker = new Docker({ socketPath: '/var/run/docker.sock' })
+	private readonly docker = docker
 
 	async listContainers(): Promise<ContainerDto[]> {
-		const containers = await this.docker.listContainers({ all: true })
-		return containers.map(container => this.toContainerDto(container))
+		try {
+			const containers = await this.docker.listContainers({ all: true })
+			return containers.map(container => this.toContainerDto(container))
+		} catch (error) {
+			console.error('Docker unavailable:', error)
+			return []
+		}
 	}
 
 	async startContainer(id: string): Promise<{ id: string; action: 'start' }> {
