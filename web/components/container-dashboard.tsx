@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Select } from '@/components/ui/select'
 
 export interface ContainerItem {
 	id: string
@@ -12,19 +14,16 @@ export interface ContainerItem {
 	state: string
 	status: string
 }
+
+type StatusFilter = 'all' | 'running' | 'stopped' | 'restarting'
+
 export function ContainerDashboard() {
 	const [containers, setContainers] = useState<ContainerItem[]>([])
 	const [isLoading, setIsLoading] = useState(true)
 	const [errorMessage, setErrorMessage] = useState<string | null>(null)
 	const [pendingKey, setPendingKey] = useState<string | null>(null)
-
-	const sortedContainers = useMemo(
-		() =>
-			[...containers].sort((first, second) =>
-				first.name.localeCompare(second.name),
-			),
-		[containers],
-	)
+	const [searchQuery, setSearchQuery] = useState('')
+	const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
 
 	const summary = useMemo(() => {
 		let running = 0
@@ -65,6 +64,45 @@ export function ContainerDashboard() {
 		return 'secondary' as const
 	}
 
+	const matchesStatusFilter = (
+		container: ContainerItem,
+		filter: StatusFilter,
+	) => {
+		const state = container.state.toLowerCase()
+		const status = container.status.toLowerCase()
+
+		if (filter === 'all') {
+			return true
+		}
+
+		if (filter === 'running') {
+			return state === 'running' && !status.includes('restarting')
+		}
+
+		if (filter === 'restarting') {
+			return state === 'restarting' || status.includes('restarting')
+		}
+
+		return state === 'exited' || state === 'stopped' || state === 'created'
+	}
+
+	const filteredContainers = useMemo(() => {
+		const normalizedQuery = searchQuery.trim().toLowerCase()
+
+		return containers
+			.filter(container => {
+				const queryMatch =
+					normalizedQuery.length === 0 ||
+					container.name.toLowerCase().includes(normalizedQuery) ||
+					container.image.toLowerCase().includes(normalizedQuery)
+
+				const statusMatch = matchesStatusFilter(container, statusFilter)
+
+				return queryMatch && statusMatch
+			})
+			.sort((first, second) => first.name.localeCompare(second.name))
+	}, [containers, searchQuery, statusFilter])
+
 	const refreshContainers = async (showLoader = false) => {
 		if (showLoader) {
 			setIsLoading(true)
@@ -87,6 +125,20 @@ export function ContainerDashboard() {
 	useEffect(() => {
 		void refreshContainers(true)
 	}, [])
+
+	useEffect(() => {
+		if (pendingKey !== null) {
+			return
+		}
+
+		const intervalId = setInterval(() => {
+			void refreshContainers()
+		}, 5000)
+
+		return () => {
+			clearInterval(intervalId)
+		}
+	}, [pendingKey])
 
 	const runAction = async (
 		id: string,
@@ -168,6 +220,32 @@ export function ContainerDashboard() {
 				</Card>
 			</div>
 
+			<Card>
+				<CardContent className='pt-6'>
+					<div className='grid gap-3 md:grid-cols-[2fr_1fr]'>
+						<Input
+							placeholder='Search by container name or image'
+							value={searchQuery}
+							onChange={event => setSearchQuery(event.target.value)}
+						/>
+						<Select
+							value={statusFilter}
+							onChange={event =>
+								setStatusFilter(event.target.value as StatusFilter)
+							}
+						>
+							<option value='all'>All</option>
+							<option value='running'>Running</option>
+							<option value='stopped'>Exited/Stopped</option>
+							<option value='restarting'>Restarting</option>
+						</Select>
+					</div>
+					<p className='mt-3 text-sm text-muted-foreground'>
+						Matched containers: {filteredContainers.length}
+					</p>
+				</CardContent>
+			</Card>
+
 			{errorMessage && (
 				<Card className='border-destructive/40'>
 					<CardContent className='flex items-center justify-between gap-3 pt-6'>
@@ -191,17 +269,17 @@ export function ContainerDashboard() {
 						</p>
 					</CardContent>
 				</Card>
-			) : sortedContainers.length === 0 ? (
+			) : filteredContainers.length === 0 ? (
 				<Card>
 					<CardContent className='pt-6'>
 						<p className='text-sm text-muted-foreground'>
-							No containers found.
+							No containers match the current filters.
 						</p>
 					</CardContent>
 				</Card>
 			) : (
 				<div className='grid gap-4 md:grid-cols-2 xl:grid-cols-3'>
-					{sortedContainers.map(container => (
+					{filteredContainers.map(container => (
 						<Card key={container.id}>
 							<CardHeader>
 								<div className='flex items-center justify-between gap-3'>
