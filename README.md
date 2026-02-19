@@ -40,8 +40,8 @@ Frontend UI → Next.js API Proxy → NestJS Backend → Dockerode SDK → Docke
 
 ```mermaid
 flowchart LR
-    A[User in Browser]\nDashboard UI --> B[Next.js App Router]\n/api/* proxy routes
-    B --> C[NestJS API]\n/containers /clusters /stats
+  A["User in Browser<br/>Dashboard UI"] --> B["Next.js App Router<br/>/api/* proxy routes"]
+  B --> C["NestJS API<br/>/containers /clusters /stats"]
     C --> D[Dockerode]
     D --> E[/var/run/docker.sock]
     E --> F[Host Docker Engine]
