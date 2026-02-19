@@ -40,13 +40,12 @@ Frontend UI → Next.js API Proxy → NestJS Backend → Dockerode SDK → Docke
 
 ```mermaid
 flowchart LR
-  A["User in Browser<br/>Dashboard UI"] --> B["Next.js App Router<br/>/api/* proxy routes"]
-  B --> C["NestJS API<br/>/containers /clusters /stats"]
-    C --> D[Dockerode]
-    D --> E[/var/run/docker.sock]
-    E --> F[Host Docker Engine]
-    F --> G[Containers]
-    G --> F --> E --> D --> C --> B --> A
+  A["User in Browser<br/>Frontend UI"] --> B["Next.js API Proxy"]
+  B --> C["NestJS Backend"]
+  C --> D["Dockerode SDK"]
+  D --> E["Docker Engine Socket<br/>/var/run/docker.sock"]
+  E --> F["Docker Engine"]
+  F --> G["Containers"]
 ```
 
 ### Layer responsibilities
