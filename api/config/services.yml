@@ -1,0 +1,155 @@
+services:
+  wordpress:
+    display_name: WordPress
+    description: CMS platform with exploitable plugins (SQLi, file upload RCE)
+    container_name: kz-wordpress
+    network: kz-sploitable_vuln_net
+    ports:
+      - "8080:80"
+    env:
+      WORDPRESS_DB_HOST: kz-mysql:3306
+      WORDPRESS_DB_USER: root
+      WORDPRESS_DB_PASSWORD: root
+    profiles:
+      easy:
+        image: kzsploitable/wordpress:vuln-easy
+        label: Easy - All vulnerabilities active
+        cves:
+          - CVE-2024-27956
+          - CVE-2023-32243
+      medium:
+        image: kzsploitable/wordpress:vuln-medium
+        label: Medium - Limited vulnerabilities
+        cves:
+          - CVE-2024-27956
+      hard:
+        image: kzsploitable/wordpress:secure
+        label: Hard - Fully patched
+        cves: []
+    active_profile: easy
+
+  suitecrm:
+    display_name: SuiteCRM
+    description: Enterprise CRM with default credentials and SQLi
+    container_name: kz-suitecrm
+    network: kz-sploitable_vuln_net
+    ports:
+      - "8081:80"
+    env: {}
+    profiles:
+      easy:
+        image: kzsploitable/suitecrm:vuln-easy
+        label: Easy - Default creds + SQLi
+        cves:
+          - CVE-2023-6388
+          - CVE-2024-1644
+      medium:
+        image: kzsploitable/suitecrm:vuln-medium
+        label: Medium - SQLi only
+        cves:
+          - CVE-2023-6388
+      hard:
+        image: kzsploitable/suitecrm:secure
+        label: Hard - Fully patched
+        cves: []
+    active_profile: easy
+
+  zabbix:
+    display_name: Zabbix
+    description: Monitoring system with weak default authentication
+    container_name: kz-zabbix-web
+    network: kz-sploitable_vuln_net
+    ports:
+      - "8082:8080"
+    env:
+      ZBX_SERVER_HOST: kz-zabbix-server
+      DB_SERVER_HOST: kz-mysql
+    profiles:
+      easy:
+        image: kzsploitable/zabbix-web:vuln-easy
+        label: Easy - Default admin/zabbix credentials
+        cves:
+          - CVE-2024-22120
+          - CVE-2024-36461
+      medium:
+        image: kzsploitable/zabbix-web:vuln-medium
+        label: Medium - Weak auth only
+        cves:
+          - CVE-2024-22120
+      hard:
+        image: kzsploitable/zabbix-web:secure
+        label: Hard - Hardened authentication
+        cves: []
+    active_profile: easy
+
+  samba:
+    display_name: Samba File Share
+    description: SMB file server with guest access and weak passwords
+    container_name: kz-samba
+    network: kz-sploitable_vuln_net
+    ports:
+      - "445:445"
+      - "139:139"
+    env: {}
+    profiles:
+      easy:
+        image: kzsploitable/samba:vuln-easy
+        label: Easy - Guest access + weak password (Password123)
+        cves:
+          - CVE-2017-7494
+      medium:
+        image: kzsploitable/samba:vuln-medium
+        label: Medium - Weak password only
+        cves: []
+      hard:
+        image: kzsploitable/samba:secure
+        label: Hard - Strong auth enforced
+        cves: []
+    active_profile: easy
+
+  mongodb:
+    display_name: MongoDB
+    description: NoSQL database without authentication
+    container_name: kz-mongodb
+    network: kz-sploitable_vuln_net
+    ports:
+      - "27017:27017"
+    env: {}
+    profiles:
+      easy:
+        image: kzsploitable/mongodb:vuln-easy
+        label: Easy - No authentication required
+        cves: []
+      medium:
+        image: kzsploitable/mongodb:vuln-medium
+        label: Medium - Weak credentials
+        cves: []
+      hard:
+        image: kzsploitable/mongodb:secure
+        label: Hard - Auth + TLS enforced
+        cves: []
+    active_profile: easy
+
+  redis:
+    display_name: Redis
+    description: In-memory data store without password protection
+    container_name: kz-redis
+    network: kz-sploitable_vuln_net
+    ports:
+      - "6379:6379"
+    env: {}
+    profiles:
+      easy:
+        image: kzsploitable/redis:vuln-easy
+        label: Easy - NOAUTH mode, RCE possible
+        cves:
+          - CVE-2022-0543
+      medium:
+        image: kzsploitable/redis:vuln-medium
+        label: Medium - Weak password
+        cves: []
+      hard:
+        image: kzsploitable/redis:secure
+        label: Hard - Auth + ACL enforced
+        cves: []
+    active_profile: easy

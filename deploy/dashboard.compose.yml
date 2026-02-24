@@ -4,8 +4,13 @@ services:
       context: ../api
     container_name: dashboard-api
     restart: unless-stopped
+    environment:
+      SERVICES_CONFIG_PATH: /app/config/services.yml
+      EXPLOITS_DIR: /exploits
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ../api/config:/app/config
+      - ../exploits:/exploits
     networks:
       - kz-sploitable_vuln_net
 

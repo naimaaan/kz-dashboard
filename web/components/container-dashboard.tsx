@@ -8,19 +8,15 @@ import {
 	ChevronDown,
 	Copy,
 	Loader2,
-	Menu,
 	MemoryStick,
 	Play,
 	RefreshCw,
 	RotateCcw,
 	ScrollText,
 	Server,
-	Settings,
 	Square,
-	Wrench,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import { ThemeToggle } from '@/components/theme-toggle'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -35,8 +31,8 @@ import {
 	SheetDescription,
 	SheetHeader,
 	SheetTitle,
-	SheetTrigger,
 } from '@/components/ui/sheet'
+import { SharedLayout } from '@/components/shared-layout'
 import { cn } from '@/lib/utils'
 
 export interface ContainerItem {
@@ -292,7 +288,7 @@ export function ContainerDashboard() {
 		const cpuText = hostCpuPercent === null ? '--' : Math.round(hostCpuPercent)
 		const ramText = hostRamPercent === null ? '--' : Math.round(hostRamPercent)
 
-		return `System Ready • ${summary.running} running • CPU ${cpuText}% • RAM ${ramText}%`
+		return `System Ready · ${summary.running} running · CPU ${cpuText}% · RAM ${ramText}%`
 	}, [summary.running, hostCpuPercent, hostRamPercent])
 
 	const isSystemWarning =
@@ -735,674 +731,552 @@ export function ContainerDashboard() {
 		}
 	}
 
-	const navItems = [
-		{ href: '#overview', label: 'Overview', icon: Boxes },
-		{ href: '#containers', label: 'Containers', icon: Wrench },
-		{ href: '#system', label: 'System', icon: ScrollText },
-		{ href: '#settings', label: 'Settings', icon: Settings },
-	]
+	const clusterSidebar = (
+		<>
+			<p className='mb-2 text-xs font-medium uppercase tracking-widest text-muted-foreground'>
+				Clusters
+			</p>
+			<button
+				type='button'
+				onClick={() => setSelectedCluster('all')}
+				className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-sm transition-colors ${
+					selectedCluster === 'all'
+						? 'bg-accent text-accent-foreground'
+						: 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+				}`}
+			>
+				<span>All</span>
+				<Badge variant='secondary'>{clusterStats.total}</Badge>
+			</button>
+			<div className='mt-1 space-y-1'>
+				{clusterStats.clusters.map(cluster => (
+					<button
+						type='button'
+						key={cluster.name}
+						onClick={() => setSelectedCluster(cluster.name)}
+						className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-sm transition-colors ${
+							selectedCluster === cluster.name
+								? 'bg-accent text-accent-foreground'
+								: 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+						}`}
+					>
+						<span className='truncate'>{cluster.name}</span>
+						<Badge variant='secondary'>{cluster.count}</Badge>
+					</button>
+				))}
+			</div>
+		</>
+	)
 
 	return (
-		<div className='min-h-screen bg-gray-50 dark:bg-zinc-950'>
-			<div className='flex min-h-screen'>
-				<aside className='sticky top-0 hidden h-screen w-64 shrink-0 border-r border-zinc-200/60 bg-background/90 p-4 dark:border-zinc-800 md:block'>
-					<div className='mb-6'>
-						<p className='text-xs uppercase tracking-widest text-muted-foreground'>
-							KZ Admin
-						</p>
-						<h2 className='mt-1 text-lg font-semibold'>Dashboard</h2>
-					</div>
-					<nav className='space-y-1'>
-						{navItems.map(item => {
-							const Icon = item.icon
-							return (
-								<a
-									key={item.href}
-									href={item.href}
-									className='flex items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground'
-								>
-									<Icon className='h-4 w-4' />
-									{item.label}
-								</a>
-							)
-						})}
-					</nav>
-
-					<div className='mt-6 border-t pt-4'>
-						<p className='mb-2 text-xs font-medium uppercase tracking-widest text-muted-foreground'>
-							Clusters
-						</p>
-						<button
-							type='button'
-							onClick={() => setSelectedCluster('all')}
-							className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-sm transition-colors ${
-								selectedCluster === 'all'
-									? 'bg-accent text-accent-foreground'
-									: 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-							}`}
-						>
-							<span>All</span>
-							<Badge variant='secondary'>{clusterStats.total}</Badge>
-						</button>
-						<div className='mt-1 space-y-1'>
-							{clusterStats.clusters.map(cluster => (
-								<button
-									type='button'
-									key={cluster.name}
-									onClick={() => setSelectedCluster(cluster.name)}
-									className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-sm transition-colors ${
-										selectedCluster === cluster.name
-											? 'bg-accent text-accent-foreground'
-											: 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-									}`}
-								>
-									<span className='truncate'>{cluster.name}</span>
-									<Badge variant='secondary'>{cluster.count}</Badge>
-								</button>
-							))}
-						</div>
-					</div>
-				</aside>
-
-				<div className='flex min-w-0 flex-1 flex-col'>
-					<header className='sticky top-0 z-20 border-b border-zinc-200/60 bg-background/90 backdrop-blur supports-[backdrop-filter]:bg-background/80 dark:border-zinc-800'>
-						<div className='mx-auto flex w-full max-w-7xl items-center justify-between gap-4 px-4 py-3 md:px-6'>
-							<div className='flex min-w-0 items-center gap-2'>
-								<Sheet>
-									<SheetTrigger asChild>
-										<Button variant='outline' size='sm' className='md:hidden'>
-											<Menu className='h-4 w-4' />
-										</Button>
-									</SheetTrigger>
-									<SheetContent className='max-w-xs p-4'>
-										<SheetHeader>
-											<SheetTitle>Navigation</SheetTitle>
-											<SheetDescription>Quick access sections</SheetDescription>
-										</SheetHeader>
-										<nav className='mt-5 space-y-1'>
-											{navItems.map(item => {
-												const Icon = item.icon
-												return (
-													<a
-														key={item.href}
-														href={item.href}
-														className='flex items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-													>
-														<Icon className='h-4 w-4' />
-														{item.label}
-													</a>
-												)
-											})}
-										</nav>
-										<div className='mt-5 border-t pt-4'>
-											<p className='mb-2 text-xs font-medium uppercase tracking-widest text-muted-foreground'>
-												Clusters
-											</p>
-											<button
-												type='button'
-												onClick={() => setSelectedCluster('all')}
-												className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-sm ${
-													selectedCluster === 'all'
-														? 'bg-accent text-accent-foreground'
-														: 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-												}`}
-											>
-												<span>All</span>
-												<Badge variant='secondary'>{clusterStats.total}</Badge>
-											</button>
-											<div className='mt-1 space-y-1'>
-												{clusterStats.clusters.map(cluster => (
-													<button
-														type='button'
-														key={cluster.name}
-														onClick={() => setSelectedCluster(cluster.name)}
-														className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-sm ${
-															selectedCluster === cluster.name
-																? 'bg-accent text-accent-foreground'
-																: 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-														}`}
-													>
-														<span className='truncate'>{cluster.name}</span>
-														<Badge variant='secondary'>{cluster.count}</Badge>
-													</button>
-												))}
-											</div>
-										</div>
-									</SheetContent>
-								</Sheet>
-								<div className='min-w-0'>
-									<h1 className='truncate text-2xl font-semibold'>
-										KZ-Sploitable Dashboard
-									</h1>
-									<p className='text-sm text-muted-foreground'>
-										Container operations overview and controls ·{' '}
-										{activeClusterLabel} · Press R to refresh
-									</p>
-								</div>
-							</div>
-
-							<div className='flex shrink-0 items-center gap-3'>
-								<div className='hidden items-center gap-2 rounded-full border border-zinc-200/60 bg-background/70 px-2 py-1 dark:border-zinc-800 lg:flex'>
-									<Badge
-										variant='default'
-										className={cn(
-											'border-transparent',
-											isSystemWarning
-												? 'border-amber-500/50 bg-amber-500/15 text-amber-700 dark:text-amber-300'
-												: 'bg-emerald-600/90 text-white dark:bg-emerald-600',
-										)}
-									>
-										{systemBadgeText}
-									</Badge>
-									<Badge variant='secondary' className='font-mono text-[11px]'>
-										Updated {lastUpdatedText}
-									</Badge>
-								</div>
-								<div className='hidden h-6 w-px bg-zinc-200 dark:bg-zinc-800 lg:block' />
-								{selectedCluster !== 'all' && (
-									<>
-										<Button
-											size='sm'
-											className='min-w-24'
-											onClick={() => void runClusterAction('start')}
-											disabled={isLoading || isBusy}
-										>
-											Start Cluster
-										</Button>
-										<Button
-											size='sm'
-											variant='destructive'
-											className='min-w-24'
-											onClick={() => void runClusterAction('stop')}
-											disabled={isLoading || isBusy}
-										>
-											Stop Cluster
-										</Button>
-										<Button
-											size='sm'
-											variant='secondary'
-											className='min-w-24'
-											onClick={() => void runClusterAction('restart')}
-											disabled={isLoading || isBusy}
-										>
-											Restart Cluster
-										</Button>
-									</>
-								)}
-								<ThemeToggle />
-								<IconButton
-									variant='outline'
-									size='sm'
-									aria-label='Refresh dashboard'
-									onClick={() => void refreshAll()}
-									disabled={isLoading || isBusy}
-									icon={
-										<RefreshCw
-											className={cn('h-4 w-4', isLoading && 'animate-spin')}
-										/>
-									}
-								/>
-							</div>
-						</div>
-					</header>
-
-					<main className='mx-auto w-full max-w-7xl space-y-8 px-4 py-6 md:px-6'>
-						{clusterActionSummary && (
-							<Card className='border-zinc-200/60 shadow-sm dark:border-zinc-800'>
-								<CardContent className='pt-6'>
-									<div className='flex flex-wrap items-center gap-2 text-sm'>
-										<Badge variant='secondary'>
-											{clusterActionSummary.cluster}
-										</Badge>
-										<p className='text-muted-foreground'>
-											Cluster {clusterActionSummary.action}:{' '}
-											{clusterActionSummary.succeeded}/
-											{clusterActionSummary.total} succeeded
-										</p>
-									</div>
-
-									{clusterActionSummary.failed.length > 0 && (
-										<details className='mt-3 rounded-md border p-2'>
-											<summary className='flex cursor-pointer list-none items-center justify-between text-xs text-muted-foreground'>
-												<span>
-													{clusterActionSummary.failed.length} failed containers
-												</span>
-												<ChevronDown className='h-4 w-4' />
-											</summary>
-											<div className='mt-2 space-y-1 text-xs text-muted-foreground'>
-												{clusterActionSummary.failed.map(item => (
-													<p key={item.id}>{item.name}</p>
-												))}
-											</div>
-										</details>
-									)}
-								</CardContent>
-							</Card>
-						)}
-
-						<section id='overview' className='space-y-4'>
-							<div>
-								<h2 className='text-lg font-semibold tracking-tight'>
-									Overview
-								</h2>
-								<p className='text-sm text-muted-foreground'>
-									Live service and workload summary.
-								</p>
-							</div>
-							{isLoading ? (
-								<div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-4'>
-									{Array.from({ length: 4 }).map((_, index) => (
-										<Card
-											key={`summary-skeleton-${index}`}
-											className='h-full border-zinc-200/60 shadow-sm dark:border-zinc-800'
-										>
-											<CardHeader className='pb-2'>
-												<Skeleton className='h-4 w-28' />
-											</CardHeader>
-											<CardContent>
-												<Skeleton className='h-8 w-16' />
-											</CardContent>
-										</Card>
-									))}
-								</div>
-							) : (
-								<div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-4'>
-									{summaryCards.map(card => {
-										const Icon = card.icon
-										const isActive = statusFilter === card.filter
-
-										return (
-											<Card
-												key={card.label}
-												className={cn(
-													'h-full border-zinc-200/60 shadow-sm transition hover:shadow-md dark:border-zinc-800',
-													isActive ? 'ring-2 ring-primary' : '',
-												)}
-											>
-												<button
-													type='button'
-													onClick={() => setStatusFilter(card.filter)}
-													className='flex h-full w-full flex-col justify-between gap-3 text-left'
-												>
-													<CardHeader className='pb-2'>
-														<div className='flex items-center justify-between'>
-															<CardTitle className='text-sm'>
-																{card.label}
-															</CardTitle>
-															<Icon className='h-4 w-4 text-muted-foreground' />
-														</div>
-													</CardHeader>
-													<CardContent>
-														<p className='text-2xl font-semibold'>
-															{card.value}
-														</p>
-													</CardContent>
-												</button>
-											</Card>
-										)
-									})}
-								</div>
+		<SharedLayout sidebar={clusterSidebar}>
+			<div className='space-y-8'>
+				{/* Sub-header with system info and cluster controls */}
+				<div className='flex flex-wrap items-center justify-between gap-3'>
+					<div className='flex flex-wrap items-center gap-2'>
+						<Badge
+							variant='default'
+							className={cn(
+								'border-transparent',
+								isSystemWarning
+									? 'border-amber-500/50 bg-amber-500/15 text-amber-700 dark:text-amber-300'
+									: 'bg-emerald-600/90 text-white dark:bg-emerald-600',
 							)}
+						>
+							{systemBadgeText}
+						</Badge>
+						<Badge variant='secondary' className='font-mono text-[11px]'>
+							Updated {lastUpdatedText}
+						</Badge>
+						<span className='text-sm text-muted-foreground'>
+							{activeClusterLabel} · Press R to refresh
+						</span>
+					</div>
 
-							<div className='flex flex-wrap items-center gap-3 border-t border-zinc-200/60 pt-4 dark:border-zinc-800'>
+					<div className='flex items-center gap-2'>
+						{selectedCluster !== 'all' && (
+							<>
 								<Button
 									size='sm'
 									className='min-w-24'
-									onClick={() => runBulkAction('start')}
+									onClick={() => void runClusterAction('start')}
 									disabled={isLoading || isBusy}
 								>
-									{pendingBulkAction === 'start' && (
-										<Loader2 className='mr-2 h-4 w-4 animate-spin' />
-									)}
-									{pendingBulkAction === 'start'
-										? 'Starting all...'
-										: 'Start All'}
+									Start Cluster
 								</Button>
 								<Button
 									size='sm'
 									variant='destructive'
 									className='min-w-24'
-									onClick={() => runBulkAction('stop')}
+									onClick={() => void runClusterAction('stop')}
 									disabled={isLoading || isBusy}
 								>
-									{pendingBulkAction === 'stop' && (
-										<Loader2 className='mr-2 h-4 w-4 animate-spin' />
-									)}
-									{pendingBulkAction === 'stop'
-										? 'Stopping all...'
-										: 'Stop All'}
+									Stop Cluster
 								</Button>
 								<Button
 									size='sm'
 									variant='secondary'
 									className='min-w-24'
-									onClick={() => runBulkAction('restart')}
+									onClick={() => void runClusterAction('restart')}
 									disabled={isLoading || isBusy}
 								>
-									{pendingBulkAction === 'restart' && (
-										<Loader2 className='mr-2 h-4 w-4 animate-spin' />
-									)}
-									{pendingBulkAction === 'restart'
-										? 'Restarting all...'
-										: 'Restart All'}
+									Restart Cluster
 								</Button>
-							</div>
-						</section>
-
-						<section
-							id='containers'
-							className='space-y-4 border-t border-zinc-200/60 pt-6 dark:border-zinc-800'
-						>
-							<div>
-								<h2 className='text-lg font-semibold tracking-tight'>
-									Containers
-								</h2>
-								<p className='text-sm text-muted-foreground'>
-									Operational controls and runtime metadata.
-								</p>
-							</div>
-							<div className='flex flex-col gap-3 lg:flex-row lg:items-center'>
-								<Input
-									placeholder='Search by container name or image'
-									value={searchQuery}
-									onChange={event => setSearchQuery(event.target.value)}
-									className='lg:max-w-xl'
+							</>
+						)}
+						<IconButton
+							variant='outline'
+							size='sm'
+							aria-label='Refresh dashboard'
+							onClick={() => void refreshAll()}
+							disabled={isLoading || isBusy}
+							icon={
+								<RefreshCw
+									className={cn('h-4 w-4', isLoading && 'animate-spin')}
 								/>
-								<Select
-									value={statusFilter}
-									onChange={event =>
-										setStatusFilter(event.target.value as StatusFilter)
-									}
-									className='lg:w-64'
-								>
-									<option value='all'>All</option>
-									<option value='running'>Running</option>
-									<option value='stopped'>Exited/Stopped</option>
-									<option value='restarting'>Restarting</option>
-								</Select>
-								<p className='text-sm text-muted-foreground lg:ml-auto'>
-									Matched: {filteredContainers.length}
+							}
+						/>
+					</div>
+				</div>
+
+				{clusterActionSummary && (
+					<Card className='border-zinc-200/60 shadow-sm dark:border-zinc-800'>
+						<CardContent className='pt-6'>
+							<div className='flex flex-wrap items-center gap-2 text-sm'>
+								<Badge variant='secondary'>
+									{clusterActionSummary.cluster}
+								</Badge>
+								<p className='text-muted-foreground'>
+									Cluster {clusterActionSummary.action}:{' '}
+									{clusterActionSummary.succeeded}/
+									{clusterActionSummary.total} succeeded
 								</p>
 							</div>
 
-							{errorMessage && (
-								<Card className='border-destructive/40'>
-									<CardContent className='flex items-center justify-between gap-3 pt-6'>
-										<p className='text-sm text-destructive'>{errorMessage}</p>
-										<Button
-											size='sm'
-											variant='outline'
-											onClick={() => void refreshAll()}
-										>
-											Try again
-										</Button>
-									</CardContent>
-								</Card>
+							{clusterActionSummary.failed.length > 0 && (
+								<details className='mt-3 rounded-md border p-2'>
+									<summary className='flex cursor-pointer list-none items-center justify-between text-xs text-muted-foreground'>
+										<span>
+											{clusterActionSummary.failed.length} failed containers
+										</span>
+										<ChevronDown className='h-4 w-4' />
+									</summary>
+									<div className='mt-2 space-y-1 text-xs text-muted-foreground'>
+										{clusterActionSummary.failed.map(item => (
+											<p key={item.id}>{item.name}</p>
+										))}
+									</div>
+								</details>
 							)}
+						</CardContent>
+					</Card>
+				)}
 
-							{isLoading ? (
-								<div className='grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3'>
-									{Array.from({ length: 6 }).map((_, index) => (
-										<Card
-											key={`container-skeleton-${index}`}
-											className='border-zinc-200/60 shadow-sm dark:border-zinc-800'
-										>
-											<CardHeader className='space-y-3'>
-												<div className='flex items-center justify-between gap-3'>
-													<Skeleton className='h-5 w-40' />
-													<Skeleton className='h-5 w-20 rounded-full' />
-												</div>
-												<Skeleton className='h-4 w-full' />
-											</CardHeader>
-											<CardContent className='space-y-3'>
-												<Skeleton className='h-8 w-full' />
-												<Skeleton className='h-8 w-full' />
-											</CardContent>
-										</Card>
-									))}
-								</div>
-							) : filteredContainers.length === 0 ? (
-								<Card className='border-zinc-200/60 shadow-sm dark:border-zinc-800'>
-									<CardContent className='pt-6'>
-										<p className='text-sm text-muted-foreground'>
-											No containers match the current filters.
-										</p>
-									</CardContent>
-								</Card>
-							) : (
-								<div className='grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3'>
-									{filteredContainers.map(container => {
-										const state = lifecycleState(container)
-										const startDisabled = state !== 'stopped' || isBusy
-										const stopDisabled = state === 'stopped' || isBusy
-										const restartDisabled = state !== 'running' || isBusy
-										const stats = containerStatsById[container.id]
-										const isStartPending =
-											pendingKey === `${container.id}-start`
-										const isStopPending = pendingKey === `${container.id}-stop`
-										const isRestartPending =
-											pendingKey === `${container.id}-restart`
-
-										return (
-											<Card
-												key={container.id}
-												className='overflow-hidden border-zinc-200/60 shadow-sm transition hover:border-zinc-300 hover:shadow-md dark:border-zinc-800 dark:hover:border-zinc-700'
-											>
-												<CardHeader>
-													<div className='flex items-center justify-between gap-3'>
-														<CardTitle className='truncate text-base'>
-															{container.name}
-														</CardTitle>
-														<Badge
-															variant='secondary'
-															className={statusBadgeClassName(container)}
-														>
-															{container.status}
-														</Badge>
-													</div>
-												</CardHeader>
-												<CardContent className='space-y-4'>
-													<p className='truncate font-mono text-xs text-muted-foreground'>
-														{container.image}
-													</p>
-													<div className='flex flex-wrap items-center gap-2 text-xs text-muted-foreground'>
-														<Badge variant='secondary' className='font-medium'>
-															<Server className='mr-1 h-3.5 w-3.5' />
-															{formatClusterLabel(container.cluster)}
-														</Badge>
-														<Badge variant='secondary'>
-															<Clock3 className='mr-1 h-3.5 w-3.5' />
-															{formatContainerUptime(container.status)}
-														</Badge>
-														<div className='inline-flex items-center gap-1 rounded-full border border-zinc-200/70 bg-zinc-100 px-2 py-0.5 font-mono text-[11px] text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300'>
-															<span>{shortId(container.id)}</span>
-															<IconButton
-																variant='outline'
-																size='sm'
-																className='h-5 w-5 border-0 bg-transparent hover:bg-zinc-200/70 dark:hover:bg-zinc-800'
-																aria-label={`Copy id for ${container.name}`}
-																onClick={() =>
-																	void copyContainerId(container.id)
-																}
-																icon={<Copy className='h-3 w-3' />}
-															/>
-														</div>
-													</div>
-
-													{stats && (
-														<div className='flex flex-wrap gap-2'>
-															<Badge
-																variant='secondary'
-																className='bg-zinc-100 text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300'
-															>
-																<Cpu className='mr-1 h-3.5 w-3.5' />
-																{stats.cpuPercent.toFixed(1)}%
-															</Badge>
-															<Badge
-																variant='secondary'
-																className='bg-zinc-100 text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300'
-															>
-																<MemoryStick className='mr-1 h-3.5 w-3.5' />
-																{formatMb(stats.memUsageBytes)}
-															</Badge>
-														</div>
-													)}
-
-													<div className='flex flex-wrap gap-2'>
-														<Button
-															size='sm'
-															className='min-w-20'
-															onClick={() => runAction(container.id, 'start')}
-															disabled={startDisabled}
-														>
-															{isStartPending && (
-																<Loader2 className='mr-2 h-4 w-4 animate-spin' />
-															)}
-															{isStartPending ? 'Starting...' : 'Start'}
-														</Button>
-														<Button
-															size='sm'
-															variant='destructive'
-															className='min-w-20'
-															onClick={() => runAction(container.id, 'stop')}
-															disabled={stopDisabled}
-														>
-															{isStopPending && (
-																<Loader2 className='mr-2 h-4 w-4 animate-spin' />
-															)}
-															{isStopPending ? 'Stopping...' : 'Stop'}
-														</Button>
-														<Button
-															size='sm'
-															variant='secondary'
-															className='min-w-20'
-															onClick={() => runAction(container.id, 'restart')}
-															disabled={restartDisabled}
-														>
-															{isRestartPending && (
-																<Loader2 className='mr-2 h-4 w-4 animate-spin' />
-															)}
-															{isRestartPending ? 'Restarting...' : 'Restart'}
-														</Button>
-														<Button
-															size='sm'
-															variant='outline'
-															className='min-w-20'
-															onClick={() => void openLogs(container)}
-														>
-															Logs
-														</Button>
-													</div>
-												</CardContent>
-											</Card>
-										)
-									})}
-								</div>
-							)}
-						</section>
-
-						<section
-							id='system'
-							className='space-y-4 border-t border-zinc-200/60 pt-6 dark:border-zinc-800'
-						>
-							<h2 className='text-lg font-semibold tracking-tight'>System</h2>
-							<div className='grid gap-4 md:grid-cols-2'>
-								<Card className='border-zinc-200/60 shadow-sm dark:border-zinc-800'>
+				<section id='overview' className='space-y-4'>
+					<div>
+						<h2 className='text-lg font-semibold tracking-tight'>
+							Overview
+						</h2>
+						<p className='text-sm text-muted-foreground'>
+							Live service and workload summary.
+						</p>
+					</div>
+					{isLoading ? (
+						<div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-4'>
+							{Array.from({ length: 4 }).map((_, index) => (
+								<Card
+									key={`summary-skeleton-${index}`}
+									className='h-full border-zinc-200/60 shadow-sm dark:border-zinc-800'
+								>
 									<CardHeader className='pb-2'>
-										<CardTitle className='flex items-center gap-2 text-sm'>
-											<MemoryStick className='h-4 w-4 text-muted-foreground' />
-											Host RAM used
-										</CardTitle>
+										<Skeleton className='h-4 w-28' />
 									</CardHeader>
-									<CardContent className='space-y-3'>
-										{hostStats ? (
-											<>
-												<div className='flex items-end justify-between gap-3'>
-													<p className='text-2xl font-semibold'>
-														{hostStats.usedMemPercent.toFixed(1)}%
-													</p>
-													<p className='font-mono text-xs text-muted-foreground'>
-														{formatMemory(hostStats.usedMemBytes)} /{' '}
-														{formatMemory(hostStats.totalMemBytes)}
-													</p>
-												</div>
-												<Progress
-													value={hostStats.usedMemPercent}
-													className='h-2 rounded-full'
-												/>
-												<p className='text-xs text-muted-foreground'>
-													{hostStats.usedMemPercent.toFixed(1)}%
-												</p>
-											</>
-										) : (
-											<p className='text-sm text-muted-foreground'>
-												{hostStatsError ?? 'Loading...'}
-											</p>
+									<CardContent>
+										<Skeleton className='h-8 w-16' />
+									</CardContent>
+								</Card>
+							))}
+						</div>
+					) : (
+						<div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-4'>
+							{summaryCards.map(card => {
+								const Icon = card.icon
+								const isActive = statusFilter === card.filter
+
+								return (
+									<Card
+										key={card.label}
+										className={cn(
+											'h-full border-zinc-200/60 shadow-sm transition hover:shadow-md dark:border-zinc-800',
+											isActive ? 'ring-2 ring-primary' : '',
 										)}
-									</CardContent>
-								</Card>
+									>
+										<button
+											type='button'
+											onClick={() => setStatusFilter(card.filter)}
+											className='flex h-full w-full flex-col justify-between gap-3 text-left'
+										>
+											<CardHeader className='pb-2'>
+												<div className='flex items-center justify-between'>
+													<CardTitle className='text-sm'>
+														{card.label}
+													</CardTitle>
+													<Icon className='h-4 w-4 text-muted-foreground' />
+												</div>
+											</CardHeader>
+											<CardContent>
+												<p className='text-2xl font-semibold'>
+													{card.value}
+												</p>
+											</CardContent>
+										</button>
+									</Card>
+								)
+							})}
+						</div>
+					)}
 
-								<Card className='border-zinc-200/60 shadow-sm dark:border-zinc-800'>
-									<CardHeader className='pb-2'>
-										<CardTitle className='flex items-center gap-2 text-sm'>
-											<Cpu className='h-4 w-4 text-muted-foreground' />
-											Host CPU usage
-										</CardTitle>
+					<div className='flex flex-wrap items-center gap-3 border-t border-zinc-200/60 pt-4 dark:border-zinc-800'>
+						<Button
+							size='sm'
+							className='min-w-24'
+							onClick={() => runBulkAction('start')}
+							disabled={isLoading || isBusy}
+						>
+							{pendingBulkAction === 'start' && (
+								<Loader2 className='mr-2 h-4 w-4 animate-spin' />
+							)}
+							{pendingBulkAction === 'start'
+								? 'Starting all...'
+								: 'Start All'}
+						</Button>
+						<Button
+							size='sm'
+							variant='destructive'
+							className='min-w-24'
+							onClick={() => runBulkAction('stop')}
+							disabled={isLoading || isBusy}
+						>
+							{pendingBulkAction === 'stop' && (
+								<Loader2 className='mr-2 h-4 w-4 animate-spin' />
+							)}
+							{pendingBulkAction === 'stop'
+								? 'Stopping all...'
+								: 'Stop All'}
+						</Button>
+						<Button
+							size='sm'
+							variant='secondary'
+							className='min-w-24'
+							onClick={() => runBulkAction('restart')}
+							disabled={isLoading || isBusy}
+						>
+							{pendingBulkAction === 'restart' && (
+								<Loader2 className='mr-2 h-4 w-4 animate-spin' />
+							)}
+							{pendingBulkAction === 'restart'
+								? 'Restarting all...'
+								: 'Restart All'}
+						</Button>
+					</div>
+				</section>
+
+				<section
+					id='containers'
+					className='space-y-4 border-t border-zinc-200/60 pt-6 dark:border-zinc-800'
+				>
+					<div>
+						<h2 className='text-lg font-semibold tracking-tight'>
+							Containers
+						</h2>
+						<p className='text-sm text-muted-foreground'>
+							Operational controls and runtime metadata.
+						</p>
+					</div>
+					<div className='flex flex-col gap-3 lg:flex-row lg:items-center'>
+						<Input
+							placeholder='Search by container name or image'
+							value={searchQuery}
+							onChange={event => setSearchQuery(event.target.value)}
+							className='lg:max-w-xl'
+						/>
+						<Select
+							value={statusFilter}
+							onChange={event =>
+								setStatusFilter(event.target.value as StatusFilter)
+							}
+							className='lg:w-64'
+						>
+							<option value='all'>All</option>
+							<option value='running'>Running</option>
+							<option value='stopped'>Exited/Stopped</option>
+							<option value='restarting'>Restarting</option>
+						</Select>
+						<p className='text-sm text-muted-foreground lg:ml-auto'>
+							Matched: {filteredContainers.length}
+						</p>
+					</div>
+
+					{errorMessage && (
+						<Card className='border-destructive/40'>
+							<CardContent className='flex items-center justify-between gap-3 pt-6'>
+								<p className='text-sm text-destructive'>{errorMessage}</p>
+								<Button
+									size='sm'
+									variant='outline'
+									onClick={() => void refreshAll()}
+								>
+									Try again
+								</Button>
+							</CardContent>
+						</Card>
+					)}
+
+					{isLoading ? (
+						<div className='grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3'>
+							{Array.from({ length: 6 }).map((_, index) => (
+								<Card
+									key={`container-skeleton-${index}`}
+									className='border-zinc-200/60 shadow-sm dark:border-zinc-800'
+								>
+									<CardHeader className='space-y-3'>
+										<div className='flex items-center justify-between gap-3'>
+											<Skeleton className='h-5 w-40' />
+											<Skeleton className='h-5 w-20 rounded-full' />
+										</div>
+										<Skeleton className='h-4 w-full' />
 									</CardHeader>
 									<CardContent className='space-y-3'>
-										{hostStats ? (
-											<>
-												<div className='flex items-end justify-between gap-3'>
-													<p className='text-2xl font-semibold'>
-														{hostCpuPercent?.toFixed(1)}%
-													</p>
-													<p className='font-mono text-xs text-muted-foreground'>
-														System-wide
-													</p>
+										<Skeleton className='h-8 w-full' />
+										<Skeleton className='h-8 w-full' />
+									</CardContent>
+								</Card>
+							))}
+						</div>
+					) : filteredContainers.length === 0 ? (
+						<Card className='border-zinc-200/60 shadow-sm dark:border-zinc-800'>
+							<CardContent className='pt-6'>
+								<p className='text-sm text-muted-foreground'>
+									No containers match the current filters.
+								</p>
+							</CardContent>
+						</Card>
+					) : (
+						<div className='grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3'>
+							{filteredContainers.map(container => {
+								const state = lifecycleState(container)
+								const startDisabled = state !== 'stopped' || isBusy
+								const stopDisabled = state === 'stopped' || isBusy
+								const restartDisabled = state !== 'running' || isBusy
+								const stats = containerStatsById[container.id]
+								const isStartPending =
+									pendingKey === `${container.id}-start`
+								const isStopPending = pendingKey === `${container.id}-stop`
+								const isRestartPending =
+									pendingKey === `${container.id}-restart`
+
+								return (
+									<Card
+										key={container.id}
+										className='overflow-hidden border-zinc-200/60 shadow-sm transition hover:border-zinc-300 hover:shadow-md dark:border-zinc-800 dark:hover:border-zinc-700'
+									>
+										<CardHeader>
+											<div className='flex items-center justify-between gap-3'>
+												<CardTitle className='truncate text-base'>
+													{container.name}
+												</CardTitle>
+												<Badge
+													variant='secondary'
+													className={statusBadgeClassName(container)}
+												>
+													{container.status}
+												</Badge>
+											</div>
+										</CardHeader>
+										<CardContent className='space-y-4'>
+											<p className='truncate font-mono text-xs text-muted-foreground'>
+												{container.image}
+											</p>
+											<div className='flex flex-wrap items-center gap-2 text-xs text-muted-foreground'>
+												<Badge variant='secondary' className='font-medium'>
+													<Server className='mr-1 h-3.5 w-3.5' />
+													{formatClusterLabel(container.cluster)}
+												</Badge>
+												<Badge variant='secondary'>
+													<Clock3 className='mr-1 h-3.5 w-3.5' />
+													{formatContainerUptime(container.status)}
+												</Badge>
+												<div className='inline-flex items-center gap-1 rounded-full border border-zinc-200/70 bg-zinc-100 px-2 py-0.5 font-mono text-[11px] text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300'>
+													<span>{shortId(container.id)}</span>
+													<IconButton
+														variant='outline'
+														size='sm'
+														className='h-5 w-5 border-0 bg-transparent hover:bg-zinc-200/70 dark:hover:bg-zinc-800'
+														aria-label={`Copy id for ${container.name}`}
+														onClick={() =>
+															void copyContainerId(container.id)
+														}
+														icon={<Copy className='h-3 w-3' />}
+													/>
 												</div>
-												<Progress
-													value={hostCpuPercent ?? 0}
-													className='h-2 rounded-full'
-												/>
-												<div className='flex items-center justify-between'>
-													<p className='text-xs text-muted-foreground'>
-														Host uptime
-													</p>
+											</div>
+
+											{stats && (
+												<div className='flex flex-wrap gap-2'>
 													<Badge
 														variant='secondary'
-														className={uptimeBadgeClassName}
+														className='bg-zinc-100 text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300'
 													>
-														{formatUptime(hostStats.uptimeSeconds)}
+														<Cpu className='mr-1 h-3.5 w-3.5' />
+														{stats.cpuPercent.toFixed(1)}%
+													</Badge>
+													<Badge
+														variant='secondary'
+														className='bg-zinc-100 text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300'
+													>
+														<MemoryStick className='mr-1 h-3.5 w-3.5' />
+														{formatMb(stats.memUsageBytes)}
 													</Badge>
 												</div>
-											</>
-										) : (
-											<p className='text-sm text-muted-foreground'>
-												{hostStatsError ?? 'Loading...'}
-											</p>
-										)}
-									</CardContent>
-								</Card>
-							</div>
-						</section>
+											)}
 
-						<section
-							id='settings'
-							className='space-y-4 border-t border-zinc-200/60 pt-6 dark:border-zinc-800'
-						>
-							<Card className='border-zinc-200/60 shadow-sm dark:border-zinc-800'>
-								<CardHeader>
-									<CardTitle className='text-sm'>Settings</CardTitle>
-								</CardHeader>
-								<CardContent>
+											<div className='flex flex-wrap gap-2'>
+												<Button
+													size='sm'
+													className='min-w-20'
+													onClick={() => runAction(container.id, 'start')}
+													disabled={startDisabled}
+												>
+													{isStartPending && (
+														<Loader2 className='mr-2 h-4 w-4 animate-spin' />
+													)}
+													{isStartPending ? 'Starting...' : 'Start'}
+												</Button>
+												<Button
+													size='sm'
+													variant='destructive'
+													className='min-w-20'
+													onClick={() => runAction(container.id, 'stop')}
+													disabled={stopDisabled}
+												>
+													{isStopPending && (
+														<Loader2 className='mr-2 h-4 w-4 animate-spin' />
+													)}
+													{isStopPending ? 'Stopping...' : 'Stop'}
+												</Button>
+												<Button
+													size='sm'
+													variant='secondary'
+													className='min-w-20'
+													onClick={() => runAction(container.id, 'restart')}
+													disabled={restartDisabled}
+												>
+													{isRestartPending && (
+														<Loader2 className='mr-2 h-4 w-4 animate-spin' />
+													)}
+													{isRestartPending ? 'Restarting...' : 'Restart'}
+												</Button>
+												<Button
+													size='sm'
+													variant='outline'
+													className='min-w-20'
+													onClick={() => void openLogs(container)}
+												>
+													Logs
+												</Button>
+											</div>
+										</CardContent>
+									</Card>
+								)
+							})}
+						</div>
+					)}
+				</section>
+
+				<section
+					id='system'
+					className='space-y-4 border-t border-zinc-200/60 pt-6 dark:border-zinc-800'
+				>
+					<h2 className='text-lg font-semibold tracking-tight'>System</h2>
+					<div className='grid gap-4 md:grid-cols-2'>
+						<Card className='border-zinc-200/60 shadow-sm dark:border-zinc-800'>
+							<CardHeader className='pb-2'>
+								<CardTitle className='flex items-center gap-2 text-sm'>
+									<MemoryStick className='h-4 w-4 text-muted-foreground' />
+									Host RAM used
+								</CardTitle>
+							</CardHeader>
+							<CardContent className='space-y-3'>
+								{hostStats ? (
+									<>
+										<div className='flex items-end justify-between gap-3'>
+											<p className='text-2xl font-semibold'>
+												{hostStats.usedMemPercent.toFixed(1)}%
+											</p>
+											<p className='font-mono text-xs text-muted-foreground'>
+												{formatMemory(hostStats.usedMemBytes)} /{' '}
+												{formatMemory(hostStats.totalMemBytes)}
+											</p>
+										</div>
+										<Progress
+											value={hostStats.usedMemPercent}
+											className='h-2 rounded-full'
+										/>
+										<p className='text-xs text-muted-foreground'>
+											{hostStats.usedMemPercent.toFixed(1)}%
+										</p>
+									</>
+								) : (
 									<p className='text-sm text-muted-foreground'>
-										Settings panel placeholder.
+										{hostStatsError ?? 'Loading...'}
 									</p>
-								</CardContent>
-							</Card>
-						</section>
-					</main>
-				</div>
+								)}
+							</CardContent>
+						</Card>
+
+						<Card className='border-zinc-200/60 shadow-sm dark:border-zinc-800'>
+							<CardHeader className='pb-2'>
+								<CardTitle className='flex items-center gap-2 text-sm'>
+									<Cpu className='h-4 w-4 text-muted-foreground' />
+									Host CPU usage
+								</CardTitle>
+							</CardHeader>
+							<CardContent className='space-y-3'>
+								{hostStats ? (
+									<>
+										<div className='flex items-end justify-between gap-3'>
+											<p className='text-2xl font-semibold'>
+												{hostCpuPercent?.toFixed(1)}%
+											</p>
+											<p className='font-mono text-xs text-muted-foreground'>
+												System-wide
+											</p>
+										</div>
+										<Progress
+											value={hostCpuPercent ?? 0}
+											className='h-2 rounded-full'
+										/>
+										<div className='flex items-center justify-between'>
+											<p className='text-xs text-muted-foreground'>
+												Host uptime
+											</p>
+											<Badge
+												variant='secondary'
+												className={uptimeBadgeClassName}
+											>
+												{formatUptime(hostStats.uptimeSeconds)}
+											</Badge>
+										</div>
+									</>
+								) : (
+									<p className='text-sm text-muted-foreground'>
+										{hostStatsError ?? 'Loading...'}
+									</p>
+								)}
+							</CardContent>
+						</Card>
+					</div>
+				</section>
 			</div>
 
 			<Sheet open={isLogsOpen} onOpenChange={setIsLogsOpen}>
@@ -1475,6 +1349,6 @@ export function ContainerDashboard() {
 					</div>
 				</SheetContent>
 			</Sheet>
-		</div>
+		</SharedLayout>
 	)
 }
