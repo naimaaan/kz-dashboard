@@ -1,7 +1,15 @@
+settings:
+  max_concurrent: 3
+  vulhub_dir: /home/projects/kz-dashboard/vulhub-master
+
+# ============================================================
+# EXISTING SERVICES (profile-based, placeholder images)
+# ============================================================
 services:
-  wordpress:
-    display_name: WordPress
+  wordpress-custom:
+    display_name: WordPress (Custom)
     description: CMS platform with exploitable plugins (SQLi, file upload RCE)
+    category: custom
     container_name: kz-wordpress
     network: kz-sploitable_vuln_net
     ports:
@@ -31,6 +39,7 @@ services:
   suitecrm:
     display_name: SuiteCRM
     description: Enterprise CRM with default credentials and SQLi
+    category: custom
     container_name: kz-suitecrm
     network: kz-sploitable_vuln_net
     ports:
@@ -57,6 +66,7 @@ services:
   zabbix:
     display_name: Zabbix
     description: Monitoring system with weak default authentication
+    category: custom
     container_name: kz-zabbix-web
     network: kz-sploitable_vuln_net
     ports:
@@ -85,6 +95,7 @@ services:
   samba:
     display_name: Samba File Share
     description: SMB file server with guest access and weak passwords
+    category: custom
     container_name: kz-samba
     network: kz-sploitable_vuln_net
     ports:
@@ -107,9 +118,10 @@ services:
         cves: []
     active_profile: easy
 
-  mongodb:
-    display_name: MongoDB
+  mongodb-custom:
+    display_name: MongoDB (Custom)
     description: NoSQL database without authentication
+    category: custom
     container_name: kz-mongodb
     network: kz-sploitable_vuln_net
     ports:
@@ -130,9 +142,10 @@ services:
         cves: []
     active_profile: easy
 
-  redis:
-    display_name: Redis
+  redis-custom:
+    display_name: Redis (Custom)
     description: In-memory data store without password protection
+    category: custom
     container_name: kz-redis
     network: kz-sploitable_vuln_net
     ports:
@@ -153,3 +166,273 @@ services:
         label: Hard - Auth + ACL enforced
         cves: []
     active_profile: easy
+
+  # ============================================================
+  # VULHUB SERVICES - CMS & Web Applications
+  # ============================================================
+  wordpress-vulhub:
+    display_name: WordPress 4.6
+    description: CMS - Remote Code Execution via PHPMailer
+    category: cms
+    deploy_mode: compose
+    compose_path: wordpress/pwnscriptum
+    compose_service: web
+    host_port: 9020
+    container_port: 80
+    cves:
+      - CVE-2016-10033
+
+  drupal:
+    display_name: Drupal 8.5.0
+    description: CMS - Drupalgeddon2 Remote Code Execution
+    category: cms
+    deploy_mode: compose
+    compose_path: drupal/CVE-2018-7600
+    compose_service: web
+    host_port: 9021
+    container_port: 80
+    cves:
+      - CVE-2018-7600
+
+  joomla:
+    display_name: Joomla 3.7.0
+    description: CMS - SQL Injection in com_fields
+    category: cms
+    deploy_mode: compose
+    compose_path: joomla/CVE-2017-8917
+    compose_service: web
+    host_port: 9022
+    container_port: 80
+    cves:
+      - CVE-2017-8917
+
+  strapi:
+    display_name: Strapi 3.0.0-beta.17.4
+    description: Headless CMS - Password Reset RCE
+    category: cms
+    deploy_mode: image
+    image: strapi/strapi:3.0.0-beta.17.4
+    host_port: 9023
+    container_port: 1337
+    cves:
+      - CVE-2019-18818
+
+  roundcube:
+    display_name: Roundcube 1.2.2
+    description: Webmail - RCE via Mail Send
+    category: cms
+    deploy_mode: image
+    image: vulnerables/web-roundcube-1.2.2-rce
+    host_port: 9024
+    container_port: 80
+    cves:
+      - CVE-2016-9920
+
+  phpbb:
+    display_name: phpBB 3.2.3
+    description: Forum - Remote Code Execution
+    category: cms
+    deploy_mode: image
+    image: bitnami/phpbb:3.2.3
+    host_port: 9025
+    container_port: 8080
+    cves:
+      - CVE-2019-9826
+
+  opencart:
+    display_name: OpenCart 3.0.2.0
+    description: E-commerce - RCE via Admin Upload
+    category: cms
+    deploy_mode: image
+    image: bitnami/opencart:3.0.2-0
+    host_port: 9026
+    container_port: 8080
+    cves:
+      - CVE-2020-25255
+
+  # ============================================================
+  # VULHUB SERVICES - Infrastructure & DevOps
+  # ============================================================
+  jenkins:
+    display_name: Jenkins 2.138
+    description: CI/CD - Remote Code Execution via Groovy
+    category: infrastructure
+    deploy_mode: compose
+    compose_path: jenkins/CVE-2018-1000861
+    compose_service: jenkins
+    host_port: 9030
+    container_port: 8080
+    cves:
+      - CVE-2018-1000861
+
+  gitlab:
+    display_name: GitLab CE 13.10.1
+    description: DevOps - RCE via ExifTool (heavy - ~2GB RAM)
+    category: infrastructure
+    deploy_mode: compose
+    compose_path: gitlab/CVE-2021-22205
+    compose_service: gitlab
+    host_port: 9031
+    container_port: 80
+    cves:
+      - CVE-2021-22205
+
+  gitea:
+    display_name: Gitea 1.4.0
+    description: Git hosting - RCE via Git Hook
+    category: infrastructure
+    deploy_mode: compose
+    compose_path: gitea/1.4-rce
+    compose_service: web
+    host_port: 9032
+    container_port: 3000
+    cves: []
+
+  tomcat:
+    display_name: Tomcat 8.5.19
+    description: App Server - RCE via PUT method
+    category: infrastructure
+    deploy_mode: compose
+    compose_path: tomcat/CVE-2017-12615
+    compose_service: tomcat
+    host_port: 9033
+    container_port: 8080
+    cves:
+      - CVE-2017-12615
+
+  sonarqube:
+    display_name: SonarQube 8.4.2
+    description: Code Quality - Auth Bypass / Credential Disclosure
+    category: infrastructure
+    deploy_mode: image
+    image: sonarqube:8.4.2-community
+    host_port: 9034
+    container_port: 9000
+    cves:
+      - CVE-2020-27986
+
+  grafana:
+    display_name: Grafana 8.2.6
+    description: Monitoring - Directory Traversal / File Read
+    category: infrastructure
+    deploy_mode: compose
+    compose_path: grafana/CVE-2021-43798
+    compose_service: web
+    host_port: 9035
+    container_port: 3000
+    cves:
+      - CVE-2021-43798
+
+  # ============================================================
+  # VULHUB SERVICES - Databases & Monitoring
+  # ============================================================
+  redis-vulhub:
+    display_name: Redis 5.0.7
+    description: Cache - Lua Sandbox Escape RCE
+    category: databases
+    deploy_mode: compose
+    compose_path: redis/CVE-2022-0543
+    compose_service: redis
+    host_port: 9040
+    container_port: 6379
+    cves:
+      - CVE-2022-0543
+
+  elasticsearch:
+    display_name: Elasticsearch 1.4.2
+    description: Search Engine - Groovy Sandbox RCE
+    category: databases
+    deploy_mode: compose
+    compose_path: elasticsearch/CVE-2015-1427
+    compose_service: es
+    host_port: 9041
+    container_port: 9200
+    cves:
+      - CVE-2015-1427
+
+  mongodb:
+    display_name: MongoDB 3.4
+    description: NoSQL Database - Unauthenticated Access (Misconfiguration)
+    category: databases
+    deploy_mode: image
+    image: mongo:3.4
+    host_port: 9042
+    container_port: 27017
+    cves: []
+
+  kibana:
+    display_name: Kibana 6.5.4
+    description: Analytics - RCE in Timelion
+    category: databases
+    deploy_mode: compose
+    compose_path: kibana/CVE-2019-7609
+    compose_service: kibana
+    host_port: 9043
+    container_port: 5601
+    cves:
+      - CVE-2019-7609
+
+  phpmyadmin:
+    display_name: phpMyAdmin 4.8.1
+    description: DB Admin - Local File Inclusion
+    category: databases
+    deploy_mode: compose
+    compose_path: phpmyadmin/CVE-2018-12613
+    compose_service: web
+    host_port: 9044
+    container_port: 80
+    cves:
+      - CVE-2018-12613
+
+  # ============================================================
+  # TRAINING LABS - Always Vulnerable
+  # ============================================================
+  juice-shop:
+    display_name: OWASP Juice Shop
+    description: Modern intentionally insecure web application for security training
+    category: training
+    deploy_mode: image
+    image: bkimminich/juice-shop
+    host_port: 9050
+    container_port: 3000
+    cves: []
+
+  dvwa:
+    display_name: DVWA
+    description: Damn Vulnerable Web Application
+    category: training
+    deploy_mode: image
+    image: vulnerables/web-dvwa
+    host_port: 9051
+    container_port: 80
+    cves: []
+
+  webgoat:
+    display_name: WebGoat
+    description: OWASP WebGoat security training platform
+    category: training
+    deploy_mode: image
+    image: webgoat/webgoat
+    host_port: 9052
+    container_port: 8080
+    cves: []
+
+  bwapp:
+    display_name: bWAPP
+    description: Buggy Web Application for security training
+    category: training
+    deploy_mode: image
+    image: raesene/bwapp
+    host_port: 9053
+    container_port: 80
+    cves: []
+
+  mutillidae:
+    display_name: Mutillidae II
+    description: OWASP Mutillidae II vulnerable web application
+    category: training
+    deploy_mode: image
+    image: citizenstig/nowasp
+    host_port: 9054
+    container_port: 80
+    cves: []

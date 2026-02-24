@@ -11,6 +11,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ../api/config:/app/config
       - ../exploits:/exploits
+      - ../vulhub-master:/vulhub-master
     networks:
       - kz-sploitable_vuln_net
 

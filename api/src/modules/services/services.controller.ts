@@ -16,6 +16,7 @@ export class ServicesController {
 		return this.servicesService.getService(name)
 	}
 
+	// Legacy profile endpoints (custom services)
 	@Put(':name/profile')
 	switchProfile(
 		@Param('name') name: string,
@@ -32,5 +33,21 @@ export class ServicesController {
 	@Post('reset-all')
 	resetAll() {
 		return this.servicesService.resetAll()
+	}
+
+	// Deploy endpoints (Vulhub / Docker Hub services)
+	@Post(':name/deploy')
+	deployService(@Param('name') name: string) {
+		return this.servicesService.deployService(name)
+	}
+
+	@Post(':name/undeploy')
+	undeployService(@Param('name') name: string) {
+		return this.servicesService.undeployService(name)
+	}
+
+	@Post('undeploy-all')
+	undeployAll() {
+		return this.servicesService.undeployAll()
 	}
 }
