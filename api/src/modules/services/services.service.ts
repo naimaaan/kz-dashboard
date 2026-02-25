@@ -75,13 +75,18 @@ export class ServicesService {
 
 	// ── LIST / GET ──────────────────────────────────────────
 
-	async listServices(): Promise<ServiceDto[]> {
+	async listServices(): Promise<{ services: ServiceDto[]; maxConcurrent: number }> {
 		const config = this.readConfig()
 		const containers = await this.listAllContainers()
 
-		return Object.entries(config.services).map(([name, entry]) =>
+		const services = Object.entries(config.services).map(([name, entry]) =>
 			this.toServiceDto(name, entry, config.settings, containers),
 		)
+
+		return {
+			services,
+			maxConcurrent: config.settings?.max_concurrent ?? 3,
+		}
 	}
 
 	async getService(name: string): Promise<ServiceDto> {
@@ -218,24 +223,26 @@ export class ServicesService {
 
 	// ── COMPOSE DEPLOYMENT ──────────────────────────────────
 
+	private getVulhubDir(settings?: YamlSettings): string {
+		return process.env.VULHUB_DIR ?? settings?.vulhub_dir ?? '/vulhub-master'
+	}
+
 	private async deployCompose(
 		name: string,
 		entry: YamlServiceEntry,
 		settings?: YamlSettings,
 	): Promise<void> {
-		const vulhubDir = settings?.vulhub_dir ?? '/home/projects/kz-dashboard/vulhub-master'
+		const vulhubDir = this.getVulhubDir(settings)
 		const composePath = path.join(vulhubDir, entry.compose_path!, 'docker-compose.yml')
 
 		if (!fs.existsSync(composePath)) {
 			throw new BadRequestException(`Compose file not found: ${composePath}`)
 		}
 
-		const overridePath = this.generatePortOverride(name, entry)
+		const effectivePath = this.generateEffectiveCompose(name, entry, composePath)
 		const project = `kz-${name}`
 
-		const cmd = overridePath
-			? `docker compose -f "${composePath}" -f "${overridePath}" -p "${project}" up -d --build`
-			: `docker compose -f "${composePath}" -p "${project}" up -d --build`
+		const cmd = `docker compose -f "${effectivePath}" -p "${project}" up -d --build`
 
 		try {
 			await execAsync(cmd)
@@ -251,14 +258,13 @@ export class ServicesService {
 		entry: YamlServiceEntry,
 		settings?: YamlSettings,
 	): Promise<void> {
-		const vulhubDir = settings?.vulhub_dir ?? '/home/projects/kz-dashboard/vulhub-master'
+		const vulhubDir = this.getVulhubDir(settings)
 		const composePath = path.join(vulhubDir, entry.compose_path!, 'docker-compose.yml')
-		const overridePath = this.getOverridePath(name)
+		const effectivePath = this.getEffectivePath(name)
 		const project = `kz-${name}`
 
-		const cmd = fs.existsSync(overridePath)
-			? `docker compose -f "${composePath}" -f "${overridePath}" -p "${project}" down`
-			: `docker compose -f "${composePath}" -p "${project}" down`
+		const fileToUse = fs.existsSync(effectivePath) ? effectivePath : composePath
+		const cmd = `docker compose -f "${fileToUse}" -p "${project}" down`
 
 		try {
 			await execAsync(cmd)
@@ -266,35 +272,48 @@ export class ServicesService {
 			// best effort
 		}
 
-		if (fs.existsSync(overridePath)) {
-			try { fs.unlinkSync(overridePath) } catch { /* ignore */ }
+		if (fs.existsSync(effectivePath)) {
+			try { fs.unlinkSync(effectivePath) } catch { /* ignore */ }
 		}
 	}
 
-	private generatePortOverride(name: string, entry: YamlServiceEntry): string | null {
-		if (!entry.host_port || !entry.compose_service || !entry.container_port) {
-			return null
-		}
-
+	private generateEffectiveCompose(
+		name: string,
+		entry: YamlServiceEntry,
+		originalPath: string,
+	): string {
 		const overrideDir = path.join('/tmp', 'kz-overrides')
 		if (!fs.existsSync(overrideDir)) {
 			fs.mkdirSync(overrideDir, { recursive: true })
 		}
 
-		const overridePath = path.join(overrideDir, `${name}.yml`)
-		const content = yaml.dump({
-			services: {
-				[entry.compose_service]: {
-					ports: [`${entry.host_port}:${entry.container_port}`],
-				},
-			},
-		})
+		const effectivePath = path.join(overrideDir, `${name}.yml`)
 
-		fs.writeFileSync(overridePath, content, 'utf8')
-		return overridePath
+		const raw = fs.readFileSync(originalPath, 'utf8')
+		const compose = yaml.load(raw) as Record<string, unknown>
+
+		if (
+			entry.host_port &&
+			entry.compose_service &&
+			entry.container_port &&
+			compose.services &&
+			typeof compose.services === 'object'
+		) {
+			const services = compose.services as Record<string, Record<string, unknown>>
+			const svc = services[entry.compose_service]
+			if (svc) {
+				svc.ports = [`${entry.host_port}:${entry.container_port}`]
+			}
+		}
+
+		delete compose.version
+
+		const content = yaml.dump(compose, { lineWidth: 120, noRefs: true })
+		fs.writeFileSync(effectivePath, content, 'utf8')
+		return effectivePath
 	}
 
-	private getOverridePath(name: string): string {
+	private getEffectivePath(name: string): string {
 		return path.join('/tmp', 'kz-overrides', `${name}.yml`)
 	}
 
@@ -524,6 +543,14 @@ export class ServicesService {
 		const hostPort = entry.host_port ?? null
 		const accessUrl = running && hostPort ? `http://localhost:${hostPort}` : null
 
+		let cves = entry.cves ?? []
+		if (entry.profiles && entry.active_profile) {
+			const activeProfileData = entry.profiles[entry.active_profile]
+			if (activeProfileData?.cves?.length) {
+				cves = activeProfileData.cves
+			}
+		}
+
 		return {
 			name,
 			displayName: entry.display_name,
@@ -538,7 +565,7 @@ export class ServicesService {
 			hostPort,
 			containerPort: entry.container_port ?? null,
 			composePath: entry.compose_path ?? null,
-			cves: entry.cves ?? [],
+			cves,
 			accessUrl,
 			running,
 			containerId,

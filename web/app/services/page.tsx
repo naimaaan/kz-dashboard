@@ -8,7 +8,6 @@ import {
 	Loader2,
 	Play,
 	RefreshCw,
-	RotateCcw,
 	Shield,
 	ShieldAlert,
 	ShieldCheck,
@@ -81,10 +80,9 @@ const profileStyles: Record<ProfileKey, { icon: typeof Shield; color: string; bg
 	},
 }
 
-const MAX_CONCURRENT = 3
-
 export default function ServicesPage() {
 	const [services, setServices] = useState<ServiceItem[]>([])
+	const [maxConcurrent, setMaxConcurrent] = useState(3)
 	const [isLoading, setIsLoading] = useState(true)
 	const [activeCategory, setActiveCategory] = useState<CategoryKey>('all')
 	const [busyService, setBusyService] = useState<string | null>(null)
@@ -95,8 +93,9 @@ export default function ServicesPage() {
 		try {
 			const response = await fetch('/api/services', { cache: 'no-store' })
 			if (!response.ok) throw new Error('Failed to load services')
-			const data = (await response.json()) as ServiceItem[]
-			setServices(data)
+			const data = await response.json()
+			setServices(data.services ?? data)
+			if (data.maxConcurrent != null) setMaxConcurrent(data.maxConcurrent)
 		} catch {
 			toast.error('Failed to load services')
 		} finally {
@@ -186,8 +185,8 @@ export default function ServicesPage() {
 
 	const deployServices = services.filter(s => s.deployMode !== 'profile')
 	const runningDeployCount = deployServices.filter(s => s.running).length
-	const capacityPercent = Math.min(100, (runningDeployCount / MAX_CONCURRENT) * 100)
-	const atCapacity = runningDeployCount >= MAX_CONCURRENT
+	const capacityPercent = Math.min(100, (runningDeployCount / maxConcurrent) * 100)
+	const atCapacity = runningDeployCount >= maxConcurrent
 
 	const categorySidebar = (
 		<>
@@ -227,7 +226,7 @@ export default function ServicesPage() {
 					<div className='flex items-center justify-between text-sm'>
 						<span className='text-muted-foreground'>Running</span>
 						<span className='font-medium'>
-							{runningDeployCount}/{MAX_CONCURRENT}
+							{runningDeployCount}/{maxConcurrent}
 						</span>
 					</div>
 					<Progress
@@ -257,7 +256,7 @@ export default function ServicesPage() {
 						</h2>
 						<p className='text-sm text-muted-foreground'>
 							Deploy vulnerable services from Vulhub and Docker Hub.
-							Max {MAX_CONCURRENT} running at once for stability.
+							Max {maxConcurrent} running at once for stability.
 						</p>
 					</div>
 
@@ -290,7 +289,7 @@ export default function ServicesPage() {
 						<CardContent className='flex items-center gap-3 pt-6'>
 							<AlertTriangle className='h-5 w-5 text-amber-600' />
 							<p className='text-sm text-amber-700 dark:text-amber-300'>
-								Maximum {MAX_CONCURRENT} services running. Stop a service before
+								Maximum {maxConcurrent} services running. Stop a service before
 								starting another to keep the system stable.
 							</p>
 						</CardContent>
