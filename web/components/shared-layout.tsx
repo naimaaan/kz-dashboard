@@ -3,6 +3,8 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
+	Activity,
+	BookOpen,
 	Boxes,
 	FlaskConical,
 	Menu,
@@ -30,6 +32,8 @@ const navItems: NavItem[] = [
 	{ href: '/', label: 'Containers', icon: Boxes },
 	{ href: '/services', label: 'Services', icon: Settings },
 	{ href: '/exploits', label: 'Exploits', icon: FlaskConical },
+	{ href: '/monitoring', label: 'Monitoring', icon: Activity },
+	{ href: '/guides', label: 'Guides', icon: BookOpen },
 ]
 
 function NavLink({ item, pathname }: { item: NavItem; pathname: string }) {
