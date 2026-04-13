@@ -18,9 +18,11 @@ const docker = isWin
 	? new Docker({ socketPath: '//./pipe/docker_engine' })
 	: new Docker({ socketPath: '/var/run/docker.sock' })
 
+// These containers are protected because stopping/restarting them can break
+// dashboard control itself or destabilize the host container runtime.
 const DEFAULT_PROTECTED_CONTAINERS = [
-	'kz-dashboard-api',
-	'kz-dashboard-web',
+	'dashboard-api',
+	'dashboard-web',
 	'docker',
 	'containerd',
 ]
@@ -30,17 +32,14 @@ const configuredProtectedContainers =
 		.map(value => value.trim().toLowerCase())
 		.filter(value => value.length > 0) ?? []
 
-const protectedContainers = new Set(
-	configuredProtectedContainers.length > 0
-		? configuredProtectedContainers
-		: DEFAULT_PROTECTED_CONTAINERS,
-)
+// Single shared protection source for every action path (single/bulk/cluster).
+// Custom values extend defaults so core safety protections remain in place.
+const protectedContainers = new Set([
+	...DEFAULT_PROTECTED_CONTAINERS,
+	...configuredProtectedContainers,
+])
 
 const BULK_CONCURRENCY = 5
-const CLUSTER_PROTECTED_CONTAINERS = new Set([
-	'kz-dashboard-api',
-	'kz-dashboard-web',
-])
 
 type BulkAction = 'start' | 'stop' | 'restart'
 
@@ -322,7 +321,7 @@ export class ContainersService {
 			return (
 				resolvedCluster !== null &&
 				resolvedCluster.toLowerCase() === normalizedCluster &&
-				!CLUSTER_PROTECTED_CONTAINERS.has(name.toLowerCase())
+				!protectedContainers.has(name.toLowerCase())
 			)
 		})
 
