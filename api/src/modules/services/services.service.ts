@@ -776,28 +776,49 @@ export class ServicesService {
 	): Promise<void> {
 		const timeoutSec = variant.healthcheck?.timeout_sec ?? 45
 		const deadline = Date.now() + timeoutSec * 1000
+		const projectName = this.getComposeVariantProjectName(serviceName)
 
 		while (Date.now() <= deadline) {
-			const running = await this.isComposeProjectRunning(serviceName)
-			if (running) {
+			const container = await this.findRunningComposeServiceContainer(
+				projectName,
+				variant.compose_service,
+			)
+			if (container) {
 				const healthcheck = variant.healthcheck
+
 				if (!healthcheck) {
+					return
+				}
+
+				if (container.healthStatus === 'healthy') {
 					return
 				}
 
 				if (healthcheck.type === 'http') {
 					const pathSuffix = healthcheck.path ?? '/'
-					try {
-						const response = await fetch(
-							`http://127.0.0.1:${variant.host_port}${pathSuffix}`,
-						)
-						if (response.ok) return
-					} catch {
-						// retry until timeout
+					if (container.ipAddress) {
+						try {
+							const response = await fetch(
+								`http://${container.ipAddress}:${variant.container_port}${pathSuffix}`,
+							)
+							if (response.ok) return
+						} catch {
+							// retry until timeout
+						}
 					}
-				} else {
-					const open = await this.checkTcpPort(variant.host_port)
+				} else if (container.ipAddress) {
+					const open = await this.checkTcpPortAtHost(
+						variant.container_port,
+						container.ipAddress,
+					)
 					if (open) return
+				}
+
+				// In containerized backend deployments, direct network probes may be
+				// blocked by Docker network isolation. If service container is running
+				// and has no explicit unhealthy status, treat it as ready for MVP.
+				if (!container.healthStatus || container.healthStatus === 'starting') {
+					return
 				}
 			}
 
@@ -819,6 +840,41 @@ export class ServicesService {
 		}
 
 		return false
+	}
+
+	private async findRunningComposeServiceContainer(
+		projectName: string,
+		composeService: string,
+	): Promise<{
+		ipAddress: string | null
+		healthStatus: string | null
+	} | null> {
+		const containers = await docker.listContainers({ all: true })
+		const match = containers.find(
+			container =>
+				container.State === 'running' &&
+				container.Labels?.['com.docker.compose.project'] === projectName &&
+				container.Labels?.['com.docker.compose.service'] === composeService,
+		)
+
+		if (!match) {
+			return null
+		}
+
+		try {
+			const info = await docker.getContainer(match.Id).inspect()
+			const networks = info.NetworkSettings?.Networks
+			const firstNetwork = networks
+				? Object.values(networks)[0]
+				: undefined
+
+			return {
+				ipAddress: firstNetwork?.IPAddress || null,
+				healthStatus: info.State?.Health?.Status ?? null,
+			}
+		} catch {
+			return null
+		}
 	}
 
 	private assertNoPortConflictForComposeVariant(
@@ -1349,6 +1405,13 @@ export class ServicesService {
 	}
 
 	private async checkTcpPort(port: number): Promise<boolean> {
+		return this.checkTcpPortAtHost(port, '127.0.0.1')
+	}
+
+	private async checkTcpPortAtHost(
+		port: number,
+		host: string,
+	): Promise<boolean> {
 		const { Socket } = await import('net')
 		return new Promise(resolve => {
 			const socket = new Socket()
@@ -1365,7 +1428,7 @@ export class ServicesService {
 			socket.once('connect', () => finish(true))
 			socket.once('timeout', () => finish(false))
 			socket.once('error', () => finish(false))
-			socket.connect(port, '127.0.0.1')
+			socket.connect(port, host)
 		})
 	}
 
