@@ -11,9 +11,14 @@ export interface ServiceVariantHealthcheckDto {
 }
 
 export interface ServiceVariantDto {
-	image: string
+	type: 'image' | 'compose'
+	image?: string
 	label: string
 	cves: string[]
+	composePath?: string
+	composeService?: string
+	hostPort?: number
+	containerPort?: number
 	healthcheck?: ServiceVariantHealthcheckDto
 }
 
@@ -45,7 +50,7 @@ export interface ServiceDto {
 	activeVariant: string
 	lastGoodVariant: string
 	switchable: boolean
-	variantMode: 'image' | null
+	variantMode: 'image' | 'compose' | null
 	variants: Record<string, ServiceVariantDto>
 
 	/** New deploy-mode fields (Vulhub / Docker Hub services) */

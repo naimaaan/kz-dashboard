@@ -1,6 +1,6 @@
 settings:
   max_concurrent: 3
-  vulhub_dir: /home/projects/kz-dashboard/vulhub-master
+  vulhub_dir: C:/Users/Asus/Desktop/vulhub
   protected_service_names:
     - dashboard-api
     - dashboard-web
@@ -332,26 +332,86 @@ services:
     container_port: 9000
     cves:
       - CVE-2020-27986
-  grafana:
-    display_name: Grafana 8.2.6
-    description: Monitoring - Directory Traversal / File Read
+  grafana-vulhub:
+    display_name: Grafana (Vulhub)
+    description: Monitoring stack demo with compose-based variant switching
     category: infrastructure
     deploy_mode: compose
     compose_path: grafana/CVE-2021-43798
     compose_service: web
     host_port: 9035
     container_port: 3000
+    switchable: true
+    variant_mode: compose
+    safe_compose_switch: true
+    active_variant: admin-ssrf
+    last_good_variant: admin-ssrf
+    variants:
+      traversal:
+        type: compose
+        label: CVE-2021-43798 - Plugin traversal
+        compose_path: grafana/CVE-2021-43798
+        compose_service: web
+        host_port: 9035
+        container_port: 3000
+        cves:
+          - CVE-2021-43798
+        healthcheck:
+          type: http
+          path: /login
+          timeout_sec: 30
+      admin-ssrf:
+        type: compose
+        label: Admin SSRF scenario
+        compose_path: grafana/admin-ssrf
+        compose_service: web
+        host_port: 9036
+        container_port: 3000
+        cves: []
+        healthcheck:
+          type: http
+          path: /login
+          timeout_sec: 30
     cves:
       - CVE-2021-43798
   redis-vulhub:
-    display_name: Redis 5.0.7
-    description: Cache - Lua Sandbox Escape RCE
+    display_name: Redis (Vulhub)
+    description: Redis compose scenarios for safe variant switching MVP
     category: databases
     deploy_mode: compose
     compose_path: redis/CVE-2022-0543
     compose_service: redis
     host_port: 9040
     container_port: 6379
+    switchable: true
+    variant_mode: compose
+    safe_compose_switch: true
+    active_variant: baseline
+    last_good_variant: baseline
+    variants:
+      lua-rce:
+        type: compose
+        label: CVE-2022-0543 - Lua sandbox escape
+        compose_path: redis/CVE-2022-0543
+        compose_service: redis
+        host_port: 9040
+        container_port: 6379
+        cves:
+          - CVE-2022-0543
+        healthcheck:
+          type: tcp
+          timeout_sec: 25
+      baseline:
+        type: compose
+        label: Baseline Redis scenario
+        compose_path: redis/4-unacc
+        compose_service: redis
+        host_port: 9046
+        container_port: 6379
+        cves: []
+        healthcheck:
+          type: tcp
+          timeout_sec: 25
     cves:
       - CVE-2022-0543
   elasticsearch:

@@ -68,7 +68,7 @@ interface ServiceItem {
 	activeVariant: string
 	lastGoodVariant: string
 	switchable: boolean
-	variantMode: 'image' | null
+	variantMode: 'image' | 'compose' | null
 	variants: Record<string, ServiceVariant>
 	deployMode: 'profile' | 'compose' | 'image'
 	hostPort: number | null
@@ -454,7 +454,9 @@ export default function ServicesPage() {
 							const isBusy = busyService === service.name
 							const isDeployMode = service.deployMode !== 'profile'
 							const isVariantEligible =
-								service.switchable === true && service.variantMode === 'image'
+								service.switchable === true &&
+								(service.variantMode === 'image' ||
+									service.variantMode === 'compose')
 							const variantEntries = Object.entries(service.variants ?? {})
 							const selectedVariant =
 								pendingVariant[service.name] ??

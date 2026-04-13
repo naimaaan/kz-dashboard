@@ -7,6 +7,7 @@ import {
 import { exec } from 'child_process'
 import * as Docker from 'dockerode'
 import * as fs from 'fs'
+import * as os from 'os'
 import * as path from 'path'
 import * as yaml from 'js-yaml'
 import {
@@ -35,12 +36,26 @@ interface YamlVariantHealthcheck {
 	timeout_sec?: number
 }
 
-interface YamlVariant {
+interface YamlImageVariant {
+	type?: 'image'
 	image: string
 	label: string
 	cves?: string[]
 	healthcheck?: YamlVariantHealthcheck
 }
+
+interface YamlComposeVariant {
+	type: 'compose'
+	label: string
+	compose_path: string
+	compose_service: string
+	host_port: number
+	container_port: number
+	cves?: string[]
+	healthcheck?: YamlVariantHealthcheck
+}
+
+type YamlVariant = YamlImageVariant | YamlComposeVariant
 
 interface YamlServiceEntry {
 	display_name: string
@@ -51,7 +66,8 @@ interface YamlServiceEntry {
 	ports?: string[]
 	env?: Record<string, string>
 	switchable?: boolean
-	variant_mode?: 'image'
+	variant_mode?: 'image' | 'compose'
+	safe_compose_switch?: boolean
 	variants?: Record<string, YamlVariant>
 	active_variant?: string
 	last_good_variant?: string
@@ -81,7 +97,6 @@ interface SwitchVariantContext {
 	config: YamlConfig
 	entry: YamlServiceEntry
 	variants: Record<string, YamlVariant>
-	target: YamlVariant
 	fromVariant: string
 	targetVariant: string
 }
@@ -288,8 +303,7 @@ export class ServicesService {
 
 		try {
 			const context = this.buildSwitchVariantContext(name, body)
-			const { config, entry, variants, target, fromVariant, targetVariant } =
-				context
+			const { entry, fromVariant, targetVariant } = context
 
 			if (fromVariant === targetVariant) {
 				return this.buildSwitchVariantResult(
@@ -301,61 +315,180 @@ export class ServicesService {
 				)
 			}
 
-			this.assertNoPortConflict(name, entry, config)
-
-			const rollbackVariant = this.resolveRollbackVariant(entry, variants)
-			let rolledBack = false
-			let switchError: string | null = null
-
-			try {
-				await this.recreateImageVariantContainer(name, entry, target.image)
-				await this.runVariantHealthCheck(name, entry, target)
-
-				this.applyVariantStateOnSuccess(entry, targetVariant)
-				this.writeConfig(config)
-				return this.buildSwitchVariantResult(
-					name,
-					context,
-					'success',
-					false,
-					'Variant switched successfully',
-				)
-			} catch (error) {
-				switchError =
-					error instanceof Error ? error.message : 'unknown switch failure'
-
-				if (
-					body.rollbackOnFailure !== false &&
-					rollbackVariant &&
-					variants[rollbackVariant]
-				) {
-					try {
-						const fallback = variants[rollbackVariant]
-						await this.recreateImageVariantContainer(
-							name,
-							entry,
-							fallback.image,
-						)
-						await this.runVariantHealthCheck(name, entry, fallback)
-						rolledBack = true
-					} catch {
-						rolledBack = false
-					}
-				}
-
-				const message = rolledBack
-					? `Switch failed: ${switchError}. Rolled back to ${rollbackVariant}.`
-					: `Switch failed: ${switchError}. Rollback failed.`
-				return this.buildSwitchVariantResult(
-					name,
-					context,
-					'failed',
-					rolledBack,
-					message,
-				)
+			if (entry.variant_mode === 'image') {
+				return this.performImageVariantSwitch(name, body, context)
 			}
+
+			if (entry.variant_mode === 'compose') {
+				return this.performComposeVariantSwitch(name, body, context)
+			}
+
+			throw new BadRequestException(
+				`Service "${name}" has unsupported variant mode`,
+			)
 		} finally {
 			this.switchLocks.delete(name)
+		}
+	}
+
+	private async performImageVariantSwitch(
+		name: string,
+		body: SwitchVariantDto,
+		context: SwitchVariantContext,
+	): Promise<SwitchVariantResultDto> {
+		const { config, entry, variants, targetVariant } = context
+		const target = this.requireImageVariant(
+			variants[targetVariant],
+			name,
+			targetVariant,
+		)
+
+		this.assertNoPortConflict(name, entry, config)
+
+		const rollbackVariant = this.resolveRollbackVariant(entry, variants)
+		let rolledBack = false
+		let switchError: string | null = null
+
+		try {
+			await this.recreateImageVariantContainer(name, entry, target.image)
+			await this.runVariantHealthCheck(name, entry, target)
+
+			this.applyVariantStateOnSuccess(entry, targetVariant)
+			this.writeConfig(config)
+			return this.buildSwitchVariantResult(
+				name,
+				context,
+				'success',
+				false,
+				'Variant switched successfully',
+			)
+		} catch (error) {
+			switchError =
+				error instanceof Error ? error.message : 'unknown switch failure'
+
+			if (
+				body.rollbackOnFailure !== false &&
+				rollbackVariant &&
+				variants[rollbackVariant]
+			) {
+				try {
+					const fallback = this.requireImageVariant(
+						variants[rollbackVariant],
+						name,
+						rollbackVariant,
+					)
+					await this.recreateImageVariantContainer(name, entry, fallback.image)
+					await this.runVariantHealthCheck(name, entry, fallback)
+					rolledBack = true
+				} catch {
+					rolledBack = false
+				}
+			}
+
+			const message = rolledBack
+				? `Switch failed: ${switchError}. Rolled back to ${rollbackVariant}.`
+				: `Switch failed: ${switchError}. Rollback failed.`
+			return this.buildSwitchVariantResult(
+				name,
+				context,
+				'failed',
+				rolledBack,
+				message,
+			)
+		}
+	}
+
+	private async performComposeVariantSwitch(
+		name: string,
+		body: SwitchVariantDto,
+		context: SwitchVariantContext,
+	): Promise<SwitchVariantResultDto> {
+		const { config, entry, variants, targetVariant, fromVariant } = context
+
+		if (entry.safe_compose_switch !== true) {
+			throw new BadRequestException(
+				`Service "${name}" is not enabled for safe compose variant switching`,
+			)
+		}
+
+		const target = this.requireComposeVariant(
+			variants[targetVariant],
+			name,
+			targetVariant,
+			config.settings,
+		)
+		const projectName = this.getComposeVariantProjectName(name)
+
+		this.assertNoPortConflictForComposeVariant(name, target.host_port, config)
+		const rollbackVariant = this.resolveRollbackVariant(entry, variants)
+		const rollbackCandidate = rollbackVariant
+			? variants[rollbackVariant]
+			: undefined
+		const fallback = rollbackCandidate
+			? this.asComposeVariant(rollbackCandidate)
+			: null
+
+		let rolledBack = false
+		let switchError: string | null = null
+
+		try {
+			const currentVariant = this.asComposeVariant(variants[fromVariant])
+			if (currentVariant) {
+				await this.composeVariantDown(
+					name,
+					projectName,
+					currentVariant,
+					config.settings,
+				)
+			}
+
+			await this.composeVariantUp(name, projectName, target, config.settings)
+			await this.runComposeVariantHealthCheck(name, target)
+
+			this.applyVariantStateOnSuccess(entry, targetVariant)
+			this.writeConfig(config)
+			return this.buildSwitchVariantResult(
+				name,
+				context,
+				'success',
+				false,
+				'Variant switched successfully',
+			)
+		} catch (error) {
+			switchError =
+				error instanceof Error ? error.message : 'unknown switch failure'
+
+			if (body.rollbackOnFailure !== false && fallback && rollbackVariant) {
+				try {
+					await this.composeVariantDown(
+						name,
+						projectName,
+						target,
+						config.settings,
+					)
+					await this.composeVariantUp(
+						name,
+						projectName,
+						fallback,
+						config.settings,
+					)
+					await this.runComposeVariantHealthCheck(name, fallback)
+					rolledBack = true
+				} catch {
+					rolledBack = false
+				}
+			}
+
+			const message = rolledBack
+				? `Switch failed: ${switchError}. Rolled back to ${rollbackVariant}.`
+				: `Switch failed: ${switchError}. Rollback failed.`
+			return this.buildSwitchVariantResult(
+				name,
+				context,
+				'failed',
+				rolledBack,
+				message,
+			)
 		}
 	}
 
@@ -374,9 +507,9 @@ export class ServicesService {
 		if (!entry.switchable) {
 			throw new BadRequestException(`Service "${name}" is not switchable`)
 		}
-		if (entry.variant_mode !== 'image') {
+		if (entry.variant_mode !== 'image' && entry.variant_mode !== 'compose') {
 			throw new BadRequestException(
-				`Service "${name}" does not support image variant switching`,
+				`Service "${name}" does not support variant switching`,
 			)
 		}
 		if (this.isProtectedService(name, entry, config.settings)) {
@@ -393,6 +526,10 @@ export class ServicesService {
 			)
 		}
 
+		if (entry.variant_mode === 'compose') {
+			this.requireComposeVariant(target, name, targetVariant, config.settings)
+		}
+
 		const fromVariant = this.resolveActiveVariant(entry)
 		if (!fromVariant || !variants[fromVariant]) {
 			throw new BadRequestException(
@@ -404,7 +541,6 @@ export class ServicesService {
 			config,
 			entry,
 			variants,
-			target,
 			fromVariant,
 			targetVariant,
 		}
@@ -443,6 +579,270 @@ export class ServicesService {
 				rolledBack,
 				message,
 			},
+		}
+	}
+
+	private requireImageVariant(
+		variant: YamlVariant,
+		serviceName: string,
+		variantName: string,
+	): YamlImageVariant {
+		if (variant.type === 'compose' || !variant.image) {
+			throw new BadRequestException(
+				`Variant "${variantName}" for service "${serviceName}" must be image-based`,
+			)
+		}
+
+		return variant
+	}
+
+	private requireComposeVariant(
+		variant: YamlVariant,
+		serviceName: string,
+		variantName: string,
+		settings?: YamlSettings,
+	): YamlComposeVariant {
+		if (variant.type !== 'compose') {
+			throw new BadRequestException(
+				`Variant "${variantName}" for service "${serviceName}" must be compose-based`,
+			)
+		}
+
+		if (
+			!variant.compose_path ||
+			!variant.compose_service ||
+			!variant.host_port ||
+			!variant.container_port
+		) {
+			throw new BadRequestException(
+				`Variant "${variantName}" for service "${serviceName}" is missing compose fields`,
+			)
+		}
+
+		this.resolveComposeVariantFilePath(variant, settings)
+		return variant
+	}
+
+	private asComposeVariant(
+		variant: YamlVariant | undefined,
+	): YamlComposeVariant | null {
+		if (!variant || variant.type !== 'compose') {
+			return null
+		}
+
+		return variant
+	}
+
+	private getComposeVariantProjectName(serviceName: string): string {
+		const safeServiceName = serviceName
+			.toLowerCase()
+			.replace(/[^a-z0-9-]/g, '-')
+			.replace(/^-+|-+$/g, '')
+
+		return `kz-sv-${safeServiceName || 'service'}`
+	}
+
+	private getComposeSwitchOverrideDir(): string {
+		const overrideDir = path.join(os.tmpdir(), 'kz-switch-overrides')
+		if (!fs.existsSync(overrideDir)) {
+			fs.mkdirSync(overrideDir, { recursive: true })
+		}
+		return overrideDir
+	}
+
+	private getComposeSwitchEffectivePath(
+		serviceName: string,
+		projectName: string,
+	): string {
+		const overrideDir = this.getComposeSwitchOverrideDir()
+		const safeProject = projectName.replace(/[^a-zA-Z0-9-]/g, '-')
+		const safeService = serviceName.replace(/[^a-zA-Z0-9-]/g, '-')
+		return path.join(overrideDir, `${safeService}-${safeProject}.yml`)
+	}
+
+	private resolveComposeVariantFilePath(
+		variant: YamlComposeVariant,
+		settings?: YamlSettings,
+	): string {
+		const vulhubDir = path.resolve(this.getVulhubDir(settings))
+		const variantPath = variant.compose_path.trim()
+		const scenarioDir = path.resolve(vulhubDir, variantPath)
+		const insideVulhub =
+			scenarioDir === vulhubDir ||
+			scenarioDir.startsWith(`${vulhubDir}${path.sep}`)
+
+		if (!insideVulhub) {
+			throw new BadRequestException(
+				`Compose path "${variant.compose_path}" escapes vulhub_dir`,
+			)
+		}
+
+		const composeFile = path.join(scenarioDir, 'docker-compose.yml')
+		if (!fs.existsSync(composeFile)) {
+			throw new BadRequestException(`Compose file not found: ${composeFile}`)
+		}
+
+		return composeFile
+	}
+
+	private generateComposeVariantEffectiveFile(
+		serviceName: string,
+		projectName: string,
+		variant: YamlComposeVariant,
+		composeFile: string,
+	): string {
+		const raw = fs.readFileSync(composeFile, 'utf8')
+		const composeDoc = yaml.load(raw) as Record<string, unknown>
+
+		if (
+			!composeDoc ||
+			typeof composeDoc !== 'object' ||
+			!composeDoc.services ||
+			typeof composeDoc.services !== 'object'
+		) {
+			throw new BadRequestException('Invalid docker-compose.yml content')
+		}
+
+		const services = composeDoc.services as Record<
+			string,
+			Record<string, unknown>
+		>
+		const svc = services[variant.compose_service]
+		if (!svc) {
+			throw new BadRequestException(
+				`Compose service "${variant.compose_service}" not found in compose file`,
+			)
+		}
+
+		svc.ports = [`${variant.host_port}:${variant.container_port}`]
+		delete composeDoc.version
+
+		const effectivePath = this.getComposeSwitchEffectivePath(
+			serviceName,
+			projectName,
+		)
+		fs.writeFileSync(
+			effectivePath,
+			yaml.dump(composeDoc, { lineWidth: 120, noRefs: true }),
+			'utf8',
+		)
+		return effectivePath
+	}
+
+	private async composeVariantUp(
+		serviceName: string,
+		projectName: string,
+		variant: YamlComposeVariant,
+		settings?: YamlSettings,
+	): Promise<void> {
+		const composeFile = this.resolveComposeVariantFilePath(variant, settings)
+		const effectivePath = this.generateComposeVariantEffectiveFile(
+			serviceName,
+			projectName,
+			variant,
+			composeFile,
+		)
+
+		const cmd = `docker compose -f "${effectivePath}" -p "${projectName}" up -d`
+		await execAsync(cmd)
+	}
+
+	private async composeVariantDown(
+		serviceName: string,
+		projectName: string,
+		variant: YamlComposeVariant,
+		settings?: YamlSettings,
+	): Promise<void> {
+		const composeFile = this.resolveComposeVariantFilePath(variant, settings)
+		const effectivePath = this.generateComposeVariantEffectiveFile(
+			serviceName,
+			projectName,
+			variant,
+			composeFile,
+		)
+
+		try {
+			await execAsync(
+				`docker compose -f "${effectivePath}" -p "${projectName}" down`,
+			)
+		} catch {
+			// best effort shutdown for rollback safety
+		}
+	}
+
+	private async runComposeVariantHealthCheck(
+		serviceName: string,
+		variant: YamlComposeVariant,
+	): Promise<void> {
+		const timeoutSec = variant.healthcheck?.timeout_sec ?? 45
+		const deadline = Date.now() + timeoutSec * 1000
+
+		while (Date.now() <= deadline) {
+			const running = await this.isComposeProjectRunning(serviceName)
+			if (running) {
+				const healthcheck = variant.healthcheck
+				if (!healthcheck) {
+					return
+				}
+
+				if (healthcheck.type === 'http') {
+					const pathSuffix = healthcheck.path ?? '/'
+					try {
+						const response = await fetch(
+							`http://127.0.0.1:${variant.host_port}${pathSuffix}`,
+						)
+						if (response.ok) return
+					} catch {
+						// retry until timeout
+					}
+				} else {
+					const open = await this.checkTcpPort(variant.host_port)
+					if (open) return
+				}
+			}
+
+			await new Promise(resolve => setTimeout(resolve, 1500))
+		}
+
+		throw new BadRequestException(
+			`Compose variant health check timed out for service "${serviceName}"`,
+		)
+	}
+
+	private async isComposeProjectRunning(serviceName: string): Promise<boolean> {
+		const projectPrefix = `${this.getComposeVariantProjectName(serviceName)}-`
+		const containers = await this.listAllContainers()
+		for (const [containerName, container] of containers) {
+			if (container.running && containerName.startsWith(projectPrefix)) {
+				return true
+			}
+		}
+
+		return false
+	}
+
+	private assertNoPortConflictForComposeVariant(
+		serviceName: string,
+		hostPort: number,
+		config: YamlConfig,
+	): void {
+		for (const [otherName, otherEntry] of Object.entries(config.services)) {
+			if (otherName === serviceName) continue
+
+			const staticHostPort = this.resolveHostPort(otherEntry)
+			if (staticHostPort === hostPort) {
+				throw new BadRequestException(
+					`Host port ${hostPort} conflicts with service "${otherName}"`,
+				)
+			}
+
+			for (const variant of Object.values(otherEntry.variants ?? {})) {
+				if (variant.type === 'compose' && variant.host_port === hostPort) {
+					throw new BadRequestException(
+						`Host port ${hostPort} conflicts with compose variant of service "${otherName}"`,
+					)
+				}
+			}
 		}
 	}
 
@@ -1143,7 +1543,28 @@ export class ServicesService {
 		const variants: Record<string, ServiceVariantDto> = {}
 
 		for (const [key, variant] of Object.entries(this.resolveVariants(entry))) {
+			if (variant.type === 'compose') {
+				variants[key] = {
+					type: 'compose',
+					label: variant.label,
+					cves: variant.cves ?? [],
+					composePath: variant.compose_path,
+					composeService: variant.compose_service,
+					hostPort: variant.host_port,
+					containerPort: variant.container_port,
+					healthcheck: variant.healthcheck
+						? {
+								type: variant.healthcheck.type,
+								path: variant.healthcheck.path,
+								timeoutSec: variant.healthcheck.timeout_sec,
+							}
+						: undefined,
+				}
+				continue
+			}
+
 			variants[key] = {
+				type: 'image',
 				image: variant.image,
 				label: variant.label,
 				cves: variant.cves ?? [],
@@ -1161,6 +1582,12 @@ export class ServicesService {
 	}
 
 	private resolveActiveCves(entry: YamlServiceEntry): string[] {
+		const activeVariantName = this.resolveActiveVariant(entry)
+		const activeVariant = this.resolveVariants(entry)[activeVariantName]
+		if (activeVariant?.cves?.length) {
+			return activeVariant.cves
+		}
+
 		if (entry.profiles && entry.active_profile) {
 			const activeProfileData = entry.profiles[entry.active_profile]
 			if (activeProfileData?.cves?.length) {
