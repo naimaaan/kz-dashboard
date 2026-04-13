@@ -4,10 +4,6 @@ settings:
   protected_service_names:
     - dashboard-api
     - dashboard-web
-
-# ============================================================
-# EXISTING SERVICES (profile-based, placeholder images)
-# ============================================================
 services:
   wordpress-custom:
     display_name: WordPress (Custom)
@@ -23,54 +19,47 @@ services:
       WORDPRESS_DB_PASSWORD: root
     profiles:
       easy:
-        image: kzsploitable/wordpress:vuln-easy
+        image: nginx:1.25-alpine
         label: Easy - All vulnerabilities active
-        cves:
-          - CVE-2024-27956
-          - CVE-2023-32243
+        cves: []
       medium:
-        image: kzsploitable/wordpress:vuln-medium
+        image: nginx:1.26-alpine
         label: Medium - Limited vulnerabilities
-        cves:
-          - CVE-2024-27956
+        cves: []
       hard:
-        image: kzsploitable/wordpress:secure
+        image: nginx:1.27-alpine
         label: Hard - Fully patched
         cves: []
-    active_profile: easy
+    active_profile: hard
     switchable: true
     variant_mode: image
     active_variant: easy
     last_good_variant: easy
     variants:
       easy:
-        image: kzsploitable/wordpress:vuln-easy
+        image: nginx:1.25-alpine
         label: Easy - All vulnerabilities active
-        cves:
-          - CVE-2024-27956
-          - CVE-2023-32243
+        cves: []
         healthcheck:
           type: http
           path: /
-          timeout_sec: 30
+          timeout_sec: 20
       medium:
-        image: kzsploitable/wordpress:vuln-medium
+        image: nginx:1.26-alpine
         label: Medium - Limited vulnerabilities
-        cves:
-          - CVE-2024-27956
+        cves: []
         healthcheck:
           type: http
           path: /
-          timeout_sec: 30
+          timeout_sec: 20
       hard:
-        image: kzsploitable/wordpress:secure
+        image: nginx:1.27-alpine
         label: Hard - Fully patched
         cves: []
         healthcheck:
           type: http
           path: /
-          timeout_sec: 30
-
+          timeout_sec: 20
   suitecrm:
     display_name: SuiteCRM
     description: Enterprise CRM with default credentials and SQLi
@@ -97,7 +86,6 @@ services:
         label: Hard - Fully patched
         cves: []
     active_profile: easy
-
   zabbix:
     display_name: Zabbix
     description: Monitoring system with weak default authentication
@@ -126,7 +114,6 @@ services:
         label: Hard - Hardened authentication
         cves: []
     active_profile: easy
-
   samba:
     display_name: Samba File Share
     description: SMB file server with guest access and weak passwords
@@ -152,7 +139,6 @@ services:
         label: Hard - Strong auth enforced
         cves: []
     active_profile: easy
-
   mongodb-custom:
     display_name: MongoDB (Custom)
     description: NoSQL database without authentication
@@ -176,7 +162,6 @@ services:
         label: Hard - Auth + TLS enforced
         cves: []
     active_profile: easy
-
   redis-custom:
     display_name: Redis (Custom)
     description: In-memory data store without password protection
@@ -201,10 +186,6 @@ services:
         label: Hard - Auth + ACL enforced
         cves: []
     active_profile: easy
-
-  # ============================================================
-  # VULHUB SERVICES - CMS & Web Applications
-  # ============================================================
   wordpress-vulhub:
     display_name: WordPress 4.6
     description: CMS - Remote Code Execution via PHPMailer
@@ -216,7 +197,6 @@ services:
     container_port: 80
     cves:
       - CVE-2016-10033
-
   drupal:
     display_name: Drupal 8.5.0
     description: CMS - Drupalgeddon2 Remote Code Execution
@@ -228,7 +208,6 @@ services:
     container_port: 80
     cves:
       - CVE-2018-7600
-
   joomla:
     display_name: Joomla 3.7.0
     description: CMS - SQL Injection in com_fields
@@ -240,40 +219,36 @@ services:
     container_port: 80
     cves:
       - CVE-2017-8917
-
   strapi:
     display_name: Strapi 3.0.0-beta.17.4
     description: Headless CMS - Password Reset RCE
     category: cms
     deploy_mode: image
-    image: strapi/strapi:3.0.0-beta.17.4
+    image: nginx:1.25-alpine
     host_port: 9023
-    container_port: 1337
-    cves:
-      - CVE-2019-18818
+    container_port: 80
+    cves: []
     switchable: true
     variant_mode: image
     active_variant: vuln
     last_good_variant: vuln
     variants:
       vuln:
-        image: strapi/strapi:3.0.0-beta.17.4
+        image: nginx:1.25-alpine
         label: Vulnerable - Password reset RCE
-        cves:
-          - CVE-2019-18818
+        cves: []
         healthcheck:
           type: http
-          path: /admin
-          timeout_sec: 40
+          path: /
+          timeout_sec: 20
       patched:
-        image: strapi/strapi:latest
+        image: nginx:1.27-alpine
         label: Patched - Latest image
         cves: []
         healthcheck:
           type: http
-          path: /admin
-          timeout_sec: 40
-
+          path: /
+          timeout_sec: 20
   roundcube:
     display_name: Roundcube 1.2.2
     description: Webmail - RCE via Mail Send
@@ -284,7 +259,6 @@ services:
     container_port: 80
     cves:
       - CVE-2016-9920
-
   phpbb:
     display_name: phpBB 3.2.3
     description: Forum - Remote Code Execution
@@ -295,7 +269,6 @@ services:
     container_port: 8080
     cves:
       - CVE-2019-9826
-
   opencart:
     display_name: OpenCart 3.0.2.0
     description: E-commerce - RCE via Admin Upload
@@ -306,10 +279,6 @@ services:
     container_port: 8080
     cves:
       - CVE-2020-25255
-
-  # ============================================================
-  # VULHUB SERVICES - Infrastructure & DevOps
-  # ============================================================
   jenkins:
     display_name: Jenkins 2.138
     description: CI/CD - Remote Code Execution via Groovy
@@ -321,7 +290,6 @@ services:
     container_port: 8080
     cves:
       - CVE-2018-1000861
-
   gitlab:
     display_name: GitLab CE 13.10.1
     description: DevOps - RCE via ExifTool (heavy - ~2GB RAM)
@@ -333,7 +301,6 @@ services:
     container_port: 80
     cves:
       - CVE-2021-22205
-
   gitea:
     display_name: Gitea 1.4.0
     description: Git hosting - RCE via Git Hook
@@ -344,7 +311,6 @@ services:
     host_port: 9032
     container_port: 3000
     cves: []
-
   tomcat:
     display_name: Tomcat 8.5.19
     description: App Server - RCE via PUT method
@@ -356,7 +322,6 @@ services:
     container_port: 8080
     cves:
       - CVE-2017-12615
-
   sonarqube:
     display_name: SonarQube 8.4.2
     description: Code Quality - Auth Bypass / Credential Disclosure
@@ -367,7 +332,6 @@ services:
     container_port: 9000
     cves:
       - CVE-2020-27986
-
   grafana:
     display_name: Grafana 8.2.6
     description: Monitoring - Directory Traversal / File Read
@@ -379,10 +343,6 @@ services:
     container_port: 3000
     cves:
       - CVE-2021-43798
-
-  # ============================================================
-  # VULHUB SERVICES - Databases & Monitoring
-  # ============================================================
   redis-vulhub:
     display_name: Redis 5.0.7
     description: Cache - Lua Sandbox Escape RCE
@@ -394,7 +354,6 @@ services:
     container_port: 6379
     cves:
       - CVE-2022-0543
-
   elasticsearch:
     display_name: Elasticsearch 1.4.2
     description: Search Engine - Groovy Sandbox RCE
@@ -406,7 +365,6 @@ services:
     container_port: 9200
     cves:
       - CVE-2015-1427
-
   mongodb:
     display_name: MongoDB 3.4
     description: NoSQL Database - Unauthenticated Access (Misconfiguration)
@@ -416,7 +374,6 @@ services:
     host_port: 9042
     container_port: 27017
     cves: []
-
   kibana:
     display_name: Kibana 6.5.4
     description: Analytics - RCE in Timelion
@@ -428,7 +385,6 @@ services:
     container_port: 5601
     cves:
       - CVE-2019-7609
-
   phpmyadmin:
     display_name: phpMyAdmin 4.8.1
     description: DB Admin - Local File Inclusion
@@ -440,10 +396,6 @@ services:
     container_port: 80
     cves:
       - CVE-2018-12613
-
-  # ============================================================
-  # TRAINING LABS - Always Vulnerable
-  # ============================================================
   juice-shop:
     display_name: OWASP Juice Shop
     description: Modern intentionally insecure web application for security training
@@ -453,7 +405,6 @@ services:
     host_port: 9050
     container_port: 3000
     cves: []
-
   dvwa:
     display_name: DVWA
     description: Damn Vulnerable Web Application
@@ -463,7 +414,6 @@ services:
     host_port: 9051
     container_port: 80
     cves: []
-
   webgoat:
     display_name: WebGoat
     description: OWASP WebGoat security training platform
@@ -473,7 +423,6 @@ services:
     host_port: 9052
     container_port: 8080
     cves: []
-
   bwapp:
     display_name: bWAPP
     description: Buggy Web Application for security training
@@ -483,7 +432,6 @@ services:
     host_port: 9053
     container_port: 80
     cves: []
-
   mutillidae:
     display_name: Mutillidae II
     description: OWASP Mutillidae II vulnerable web application

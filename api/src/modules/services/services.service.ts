@@ -86,11 +86,16 @@ interface SwitchVariantContext {
 	targetVariant: string
 }
 
-function execAsync(cmd: string, cwd?: string): Promise<{ stdout: string; stderr: string }> {
+function execAsync(
+	cmd: string,
+	cwd?: string,
+): Promise<{ stdout: string; stderr: string }> {
 	return new Promise((resolve, reject) => {
 		exec(cmd, { cwd, timeout: 120_000 }, (error, stdout, stderr) => {
 			if (error) {
-				reject(new Error(`${error.message}\nstdout: ${stdout}\nstderr: ${stderr}`))
+				reject(
+					new Error(`${error.message}\nstdout: ${stdout}\nstderr: ${stderr}`),
+				)
 			} else {
 				resolve({ stdout, stderr })
 			}
@@ -111,7 +116,10 @@ export class ServicesService {
 
 	// ── LIST / GET ──────────────────────────────────────────
 
-	async listServices(): Promise<{ services: ServiceDto[]; maxConcurrent: number }> {
+	async listServices(): Promise<{
+		services: ServiceDto[]
+		maxConcurrent: number
+	}> {
 		const config = this.readConfig()
 		const containers = await this.listAllContainers()
 
@@ -142,7 +150,10 @@ export class ServicesService {
 		const config = this.readConfig()
 		const entry = config.services[name]
 		if (!entry) throw new NotFoundException(`Service not found: ${name}`)
-		if (!entry.profiles) throw new BadRequestException(`Service "${name}" does not support profiles`)
+		if (!entry.profiles)
+			throw new BadRequestException(
+				`Service "${name}" does not support profiles`,
+			)
 		if (!entry.profiles[profile]) {
 			throw new BadRequestException(
 				`Invalid profile "${profile}". Available: ${Object.keys(entry.profiles).join(', ')}`,
@@ -179,11 +190,15 @@ export class ServicesService {
 				} catch (error) {
 					console.error(`Failed to reset ${name}:`, error)
 					const containers = await this.listAllContainers()
-					results.push(this.toServiceDto(name, entry, config.settings, containers))
+					results.push(
+						this.toServiceDto(name, entry, config.settings, containers),
+					)
 				}
 			} else {
 				const containers = await this.listAllContainers()
-				results.push(this.toServiceDto(name, entry, config.settings, containers))
+				results.push(
+					this.toServiceDto(name, entry, config.settings, containers),
+				)
 			}
 		}
 
@@ -197,7 +212,9 @@ export class ServicesService {
 		const entry = config.services[name]
 		if (!entry) throw new NotFoundException(`Service not found: ${name}`)
 		if (!entry.deploy_mode) {
-			throw new BadRequestException(`Service "${name}" uses profile mode, not deploy mode`)
+			throw new BadRequestException(
+				`Service "${name}" uses profile mode, not deploy mode`,
+			)
 		}
 
 		const runningCount = await this.countRunningDeployServices(config)
@@ -223,7 +240,9 @@ export class ServicesService {
 		const entry = config.services[name]
 		if (!entry) throw new NotFoundException(`Service not found: ${name}`)
 		if (!entry.deploy_mode) {
-			throw new BadRequestException(`Service "${name}" uses profile mode, not deploy mode`)
+			throw new BadRequestException(
+				`Service "${name}" uses profile mode, not deploy mode`,
+			)
 		}
 
 		if (entry.deploy_mode === 'compose') {
@@ -257,7 +276,10 @@ export class ServicesService {
 		return { stopped }
 	}
 
-	async switchVariant(name: string, body: SwitchVariantDto): Promise<SwitchVariantResultDto> {
+	async switchVariant(
+		name: string,
+		body: SwitchVariantDto,
+	): Promise<SwitchVariantResultDto> {
 		if (this.switchLocks.has(name)) {
 			throw new ConflictException(`Service "${name}" is already switching`)
 		}
@@ -266,7 +288,8 @@ export class ServicesService {
 
 		try {
 			const context = this.buildSwitchVariantContext(name, body)
-			const { config, entry, variants, target, fromVariant, targetVariant } = context
+			const { config, entry, variants, target, fromVariant, targetVariant } =
+				context
 
 			if (fromVariant === targetVariant) {
 				return this.buildSwitchVariantResult(
@@ -298,12 +321,21 @@ export class ServicesService {
 					'Variant switched successfully',
 				)
 			} catch (error) {
-				switchError = error instanceof Error ? error.message : 'unknown switch failure'
+				switchError =
+					error instanceof Error ? error.message : 'unknown switch failure'
 
-				if (body.rollbackOnFailure !== false && rollbackVariant && variants[rollbackVariant]) {
+				if (
+					body.rollbackOnFailure !== false &&
+					rollbackVariant &&
+					variants[rollbackVariant]
+				) {
 					try {
 						const fallback = variants[rollbackVariant]
-						await this.recreateImageVariantContainer(name, entry, fallback.image)
+						await this.recreateImageVariantContainer(
+							name,
+							entry,
+							fallback.image,
+						)
 						await this.runVariantHealthCheck(name, entry, fallback)
 						rolledBack = true
 					} catch {
@@ -327,7 +359,10 @@ export class ServicesService {
 		}
 	}
 
-	private buildSwitchVariantContext(name: string, body: SwitchVariantDto): SwitchVariantContext {
+	private buildSwitchVariantContext(
+		name: string,
+		body: SwitchVariantDto,
+	): SwitchVariantContext {
 		const targetVariant = body.targetVariant?.trim()
 		if (!targetVariant) {
 			throw new BadRequestException('targetVariant is required')
@@ -340,10 +375,14 @@ export class ServicesService {
 			throw new BadRequestException(`Service "${name}" is not switchable`)
 		}
 		if (entry.variant_mode !== 'image') {
-			throw new BadRequestException(`Service "${name}" does not support image variant switching`)
+			throw new BadRequestException(
+				`Service "${name}" does not support image variant switching`,
+			)
 		}
 		if (this.isProtectedService(name, entry, config.settings)) {
-			throw new BadRequestException(`Service "${name}" is protected and cannot be switched`)
+			throw new BadRequestException(
+				`Service "${name}" is protected and cannot be switched`,
+			)
 		}
 
 		const variants = this.resolveVariants(entry)
@@ -356,7 +395,9 @@ export class ServicesService {
 
 		const fromVariant = this.resolveActiveVariant(entry)
 		if (!fromVariant || !variants[fromVariant]) {
-			throw new BadRequestException(`Current active variant is not valid for service "${name}"`)
+			throw new BadRequestException(
+				`Current active variant is not valid for service "${name}"`,
+			)
 		}
 
 		return {
@@ -369,7 +410,10 @@ export class ServicesService {
 		}
 	}
 
-	private applyVariantStateOnSuccess(entry: YamlServiceEntry, targetVariant: string): void {
+	private applyVariantStateOnSuccess(
+		entry: YamlServiceEntry,
+		targetVariant: string,
+	): void {
 		entry.active_variant = targetVariant
 		entry.last_good_variant = targetVariant
 		if (entry.profiles?.[targetVariant]) {
@@ -386,7 +430,12 @@ export class ServicesService {
 	): Promise<SwitchVariantResultDto> {
 		const containers = await this.listAllContainers()
 		return {
-			service: this.toServiceDto(name, context.entry, context.config.settings, containers),
+			service: this.toServiceDto(
+				name,
+				context.entry,
+				context.config.settings,
+				containers,
+			),
 			operation: {
 				status,
 				from: context.fromVariant,
@@ -409,13 +458,21 @@ export class ServicesService {
 		settings?: YamlSettings,
 	): Promise<void> {
 		const vulhubDir = this.getVulhubDir(settings)
-		const composePath = path.join(vulhubDir, entry.compose_path!, 'docker-compose.yml')
+		const composePath = path.join(
+			vulhubDir,
+			entry.compose_path!,
+			'docker-compose.yml',
+		)
 
 		if (!fs.existsSync(composePath)) {
 			throw new BadRequestException(`Compose file not found: ${composePath}`)
 		}
 
-		const effectivePath = this.generateEffectiveCompose(name, entry, composePath)
+		const effectivePath = this.generateEffectiveCompose(
+			name,
+			entry,
+			composePath,
+		)
 		const project = `kz-${name}`
 
 		const cmd = `docker compose -f "${effectivePath}" -p "${project}" up -d --build`
@@ -435,7 +492,11 @@ export class ServicesService {
 		settings?: YamlSettings,
 	): Promise<void> {
 		const vulhubDir = this.getVulhubDir(settings)
-		const composePath = path.join(vulhubDir, entry.compose_path!, 'docker-compose.yml')
+		const composePath = path.join(
+			vulhubDir,
+			entry.compose_path!,
+			'docker-compose.yml',
+		)
 		const effectivePath = this.getEffectivePath(name)
 		const project = `kz-${name}`
 
@@ -449,7 +510,11 @@ export class ServicesService {
 		}
 
 		if (fs.existsSync(effectivePath)) {
-			try { fs.unlinkSync(effectivePath) } catch { /* ignore */ }
+			try {
+				fs.unlinkSync(effectivePath)
+			} catch {
+				/* ignore */
+			}
 		}
 	}
 
@@ -475,7 +540,10 @@ export class ServicesService {
 			compose.services &&
 			typeof compose.services === 'object'
 		) {
-			const services = compose.services as Record<string, Record<string, unknown>>
+			const services = compose.services as Record<
+				string,
+				Record<string, unknown>
+			>
 			const svc = services[entry.compose_service]
 			if (svc) {
 				svc.ports = [`${entry.host_port}:${entry.container_port}`]
@@ -495,7 +563,10 @@ export class ServicesService {
 
 	// ── IMAGE DEPLOYMENT ────────────────────────────────────
 
-	private async deployImage(name: string, entry: YamlServiceEntry): Promise<void> {
+	private async deployImage(
+		name: string,
+		entry: YamlServiceEntry,
+	): Promise<void> {
 		const containerName = `kz-${name}`
 		const imageName = entry.image!
 
@@ -511,15 +582,24 @@ export class ServicesService {
 
 		try {
 			await new Promise<void>((resolve, reject) => {
-				docker.pull(imageName, (err: Error | null, stream: NodeJS.ReadableStream) => {
-					if (err) { reject(err); return }
-					docker.modem.followProgress(stream, (followErr: Error | null) => {
-						followErr ? reject(followErr) : resolve()
-					})
-				})
+				docker.pull(
+					imageName,
+					(err: Error | null, stream: NodeJS.ReadableStream) => {
+						if (err) {
+							reject(err)
+							return
+						}
+						docker.modem.followProgress(stream, (followErr: Error | null) => {
+							followErr ? reject(followErr) : resolve()
+						})
+					},
+				)
 			})
 		} catch (error) {
-			console.warn(`Image pull failed for ${imageName}:`, error instanceof Error ? error.message : error)
+			console.warn(
+				`Image pull failed for ${imageName}:`,
+				error instanceof Error ? error.message : error,
+			)
 		}
 
 		const portBindings: Record<string, Array<{ HostPort: string }>> = {}
@@ -559,7 +639,10 @@ export class ServicesService {
 		}
 	}
 
-	private getVariantContainerName(name: string, entry: YamlServiceEntry): string {
+	private getVariantContainerName(
+		name: string,
+		entry: YamlServiceEntry,
+	): string {
 		if (entry.deploy_mode === 'image') {
 			return `kz-${name}`
 		}
@@ -586,15 +669,24 @@ export class ServicesService {
 
 		try {
 			await new Promise<void>((resolve, reject) => {
-				docker.pull(image, (err: Error | null, stream: NodeJS.ReadableStream) => {
-					if (err) { reject(err); return }
-					docker.modem.followProgress(stream, (followErr: Error | null) => {
-						followErr ? reject(followErr) : resolve()
-					})
-				})
+				docker.pull(
+					image,
+					(err: Error | null, stream: NodeJS.ReadableStream) => {
+						if (err) {
+							reject(err)
+							return
+						}
+						docker.modem.followProgress(stream, (followErr: Error | null) => {
+							followErr ? reject(followErr) : resolve()
+						})
+					},
+				)
 			})
 		} catch (error) {
-			console.warn(`Pull failed for ${image}:`, error instanceof Error ? error.message : error)
+			console.warn(
+				`Pull failed for ${image}:`,
+				error instanceof Error ? error.message : error,
+			)
 		}
 
 		const portBindings: Record<string, Array<{ HostPort: string }>> = {}
@@ -643,19 +735,30 @@ export class ServicesService {
 			const info = await existing.inspect()
 			if (info.State.Running) await existing.stop()
 			await existing.remove({ force: true })
-		} catch { /* doesn't exist */ }
+		} catch {
+			/* doesn't exist */
+		}
 
 		try {
 			await new Promise<void>((resolve, reject) => {
-				docker.pull(newImage, (err: Error | null, stream: NodeJS.ReadableStream) => {
-					if (err) { reject(err); return }
-					docker.modem.followProgress(stream, (followErr: Error | null) => {
-						followErr ? reject(followErr) : resolve()
-					})
-				})
+				docker.pull(
+					newImage,
+					(err: Error | null, stream: NodeJS.ReadableStream) => {
+						if (err) {
+							reject(err)
+							return
+						}
+						docker.modem.followProgress(stream, (followErr: Error | null) => {
+							followErr ? reject(followErr) : resolve()
+						})
+					},
+				)
 			})
 		} catch (error) {
-			console.warn(`Pull failed for ${newImage}:`, error instanceof Error ? error.message : error)
+			console.warn(
+				`Pull failed for ${newImage}:`,
+				error instanceof Error ? error.message : error,
+			)
 		}
 
 		const portBindings: Record<string, Array<{ HostPort: string }>> = {}
@@ -707,7 +810,9 @@ export class ServicesService {
 		return result
 	}
 
-	private async countRunningDeployServices(config: YamlConfig): Promise<number> {
+	private async countRunningDeployServices(
+		config: YamlConfig,
+	): Promise<number> {
 		const containers = await this.listAllContainers()
 		let count = 0
 
@@ -730,7 +835,9 @@ export class ServicesService {
 		return count
 	}
 
-	private resolveVariants(entry: YamlServiceEntry): Record<string, YamlVariant> {
+	private resolveVariants(
+		entry: YamlServiceEntry,
+	): Record<string, YamlVariant> {
 		if (entry.variants && Object.keys(entry.variants).length > 0) {
 			return entry.variants
 		}
@@ -820,7 +927,9 @@ export class ServicesService {
 
 					const pathSuffix = hc.path ?? '/'
 					try {
-						const response = await fetch(`http://127.0.0.1:${hostPort}${pathSuffix}`)
+						const response = await fetch(
+							`http://127.0.0.1:${hostPort}${pathSuffix}`,
+						)
 						if (response.ok) return
 					} catch {
 						// retry until timeout
@@ -868,10 +977,17 @@ export class ServicesService {
 		const defaultProtectedServices = ['dashboard-api', 'dashboard-web']
 		const configProtected = settings?.protected_service_names ?? []
 		const protectedServiceNames = new Set(
-			[...defaultProtectedServices, ...configProtected].map(item => item.toLowerCase()),
+			[...defaultProtectedServices, ...configProtected].map(item =>
+				item.toLowerCase(),
+			),
 		)
 
-		const defaultProtectedContainers = ['dashboard-api', 'dashboard-web', 'docker', 'containerd']
+		const defaultProtectedContainers = [
+			'dashboard-api',
+			'dashboard-web',
+			'docker',
+			'containerd',
+		]
 		const envProtected =
 			process.env.PROTECTED_CONTAINERS?.split(',')
 				.map(value => value.trim().toLowerCase())
@@ -882,13 +998,27 @@ export class ServicesService {
 		])
 
 		const serviceName = name.toLowerCase()
-		const containerName = this.getVariantContainerName(name, entry).toLowerCase()
+		const containerName = this.getVariantContainerName(
+			name,
+			entry,
+		).toLowerCase()
 
-		return protectedServiceNames.has(serviceName) || protectedContainerNames.has(containerName)
+		return (
+			protectedServiceNames.has(serviceName) ||
+			protectedContainerNames.has(containerName)
+		)
 	}
 
-	private assertNoPortConflict(name: string, entry: YamlServiceEntry, config: YamlConfig): void {
-		const ownPorts = new Set(this.resolvePortMappings(entry).map(mapping => mapping.split(':')[0]).filter(Boolean))
+	private assertNoPortConflict(
+		name: string,
+		entry: YamlServiceEntry,
+		config: YamlConfig,
+	): void {
+		const ownPorts = new Set(
+			this.resolvePortMappings(entry)
+				.map(mapping => mapping.split(':')[0])
+				.filter(Boolean),
+		)
 		if (ownPorts.size === 0) return
 
 		for (const [otherName, otherEntry] of Object.entries(config.services)) {
@@ -958,7 +1088,8 @@ export class ServicesService {
 		const variants = this.mapVariants(entry)
 
 		const hostPort = this.resolveHostPort(entry)
-		const accessUrl = running && hostPort ? `http://localhost:${hostPort}` : null
+		const accessUrl =
+			running && hostPort ? `http://localhost:${hostPort}` : null
 
 		const cves = this.resolveActiveCves(entry)
 
@@ -973,7 +1104,8 @@ export class ServicesService {
 			activeProfile: entry.active_profile ?? '',
 			profiles,
 			activeVariant: this.resolveActiveVariant(entry),
-			lastGoodVariant: entry.last_good_variant ?? this.resolveActiveVariant(entry),
+			lastGoodVariant:
+				entry.last_good_variant ?? this.resolveActiveVariant(entry),
 			switchable: entry.switchable ?? false,
 			variantMode: entry.variant_mode ?? null,
 			variants,
@@ -988,7 +1120,9 @@ export class ServicesService {
 		}
 	}
 
-	private mapProfiles(entry: YamlServiceEntry): Record<string, ServiceProfileDto> {
+	private mapProfiles(
+		entry: YamlServiceEntry,
+	): Record<string, ServiceProfileDto> {
 		const profiles: Record<string, ServiceProfileDto> = {}
 		if (!entry.profiles) return profiles
 
@@ -1003,7 +1137,9 @@ export class ServicesService {
 		return profiles
 	}
 
-	private mapVariants(entry: YamlServiceEntry): Record<string, ServiceVariantDto> {
+	private mapVariants(
+		entry: YamlServiceEntry,
+	): Record<string, ServiceVariantDto> {
 		const variants: Record<string, ServiceVariantDto> = {}
 
 		for (const [key, variant] of Object.entries(this.resolveVariants(entry))) {
@@ -1013,10 +1149,10 @@ export class ServicesService {
 				cves: variant.cves ?? [],
 				healthcheck: variant.healthcheck
 					? {
-						type: variant.healthcheck.type,
-						path: variant.healthcheck.path,
-						timeoutSec: variant.healthcheck.timeout_sec,
-					}
+							type: variant.healthcheck.type,
+							path: variant.healthcheck.path,
+							timeoutSec: variant.healthcheck.timeout_sec,
+						}
 					: undefined,
 			}
 		}
@@ -1049,7 +1185,11 @@ export class ServicesService {
 	}
 
 	private writeConfig(config: YamlConfig): void {
-		const raw = yaml.dump(config, { lineWidth: 120, noRefs: true, quotingType: '"' })
+		const raw = yaml.dump(config, {
+			lineWidth: 120,
+			noRefs: true,
+			quotingType: '"',
+		})
 		fs.writeFileSync(this.configPath, raw, 'utf8')
 	}
 }

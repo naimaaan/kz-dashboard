@@ -29,6 +29,32 @@ interface ServiceProfile {
 	cves: string[]
 }
 
+interface ServiceVariantHealthcheck {
+	type: 'http' | 'tcp'
+	path?: string
+	timeoutSec?: number
+}
+
+interface ServiceVariant {
+	image: string
+	label: string
+	cves: string[]
+	healthcheck?: ServiceVariantHealthcheck
+}
+
+interface SwitchVariantOperation {
+	status: 'success' | 'failed'
+	from: string
+	to: string
+	rolledBack: boolean
+	message: string
+}
+
+interface SwitchVariantResult {
+	service: ServiceItem
+	operation: SwitchVariantOperation
+}
+
 interface ServiceItem {
 	name: string
 	displayName: string
@@ -39,6 +65,11 @@ interface ServiceItem {
 	ports: string[]
 	activeProfile: string
 	profiles: Record<string, ServiceProfile>
+	activeVariant: string
+	lastGoodVariant: string
+	switchable: boolean
+	variantMode: 'image' | null
+	variants: Record<string, ServiceVariant>
 	deployMode: 'profile' | 'compose' | 'image'
 	hostPort: number | null
 	containerPort: number | null
@@ -49,7 +80,13 @@ interface ServiceItem {
 	containerId: string | null
 }
 
-type CategoryKey = 'all' | 'custom' | 'cms' | 'infrastructure' | 'databases' | 'training'
+type CategoryKey =
+	| 'all'
+	| 'custom'
+	| 'cms'
+	| 'infrastructure'
+	| 'databases'
+	| 'training'
 
 const CATEGORIES: { key: CategoryKey; label: string }[] = [
 	{ key: 'all', label: 'All Services' },
@@ -62,7 +99,10 @@ const CATEGORIES: { key: CategoryKey; label: string }[] = [
 
 type ProfileKey = 'easy' | 'medium' | 'hard'
 
-const profileStyles: Record<ProfileKey, { icon: typeof Shield; color: string; bg: string }> = {
+const profileStyles: Record<
+	ProfileKey,
+	{ icon: typeof Shield; color: string; bg: string }
+> = {
 	easy: {
 		icon: ShieldAlert,
 		color: 'text-rose-600 dark:text-rose-400',
@@ -87,6 +127,9 @@ export default function ServicesPage() {
 	const [activeCategory, setActiveCategory] = useState<CategoryKey>('all')
 	const [busyService, setBusyService] = useState<string | null>(null)
 	const [isResettingAll, setIsResettingAll] = useState(false)
+	const [pendingVariant, setPendingVariant] = useState<Record<string, string>>(
+		{},
+	)
 
 	const fetchServices = async (showLoader = false) => {
 		if (showLoader) setIsLoading(true)
@@ -107,13 +150,19 @@ export default function ServicesPage() {
 	const deployService = async (name: string) => {
 		setBusyService(name)
 		try {
-			const response = await fetch(`/api/services/${name}/deploy`, { method: 'POST' })
+			const response = await fetch(`/api/services/${name}/deploy`, {
+				method: 'POST',
+			})
 			if (!response.ok) {
-				const err = await response.json().catch(() => ({ message: 'Deploy failed' }))
+				const err = await response
+					.json()
+					.catch(() => ({ message: 'Deploy failed' }))
 				throw new Error(err.message ?? 'Deploy failed')
 			}
 			const updated = (await response.json()) as ServiceItem
-			setServices(prev => prev.map(s => (s.name === updated.name ? updated : s)))
+			setServices(prev =>
+				prev.map(s => (s.name === updated.name ? updated : s)),
+			)
 			toast.success(`${updated.displayName}: deployed`)
 		} catch (error) {
 			toast.error(error instanceof Error ? error.message : 'Deploy failed')
@@ -125,10 +174,14 @@ export default function ServicesPage() {
 	const undeployService = async (name: string) => {
 		setBusyService(name)
 		try {
-			const response = await fetch(`/api/services/${name}/undeploy`, { method: 'POST' })
+			const response = await fetch(`/api/services/${name}/undeploy`, {
+				method: 'POST',
+			})
 			if (!response.ok) throw new Error('Undeploy failed')
 			const updated = (await response.json()) as ServiceItem
-			setServices(prev => prev.map(s => (s.name === updated.name ? updated : s)))
+			setServices(prev =>
+				prev.map(s => (s.name === updated.name ? updated : s)),
+			)
 			toast.success(`${updated.displayName}: stopped`)
 		} catch {
 			toast.error('Undeploy failed')
@@ -138,7 +191,8 @@ export default function ServicesPage() {
 	}
 
 	const undeployAll = async () => {
-		if (!window.confirm('Stop all running Vulhub / Docker Hub services?')) return
+		if (!window.confirm('Stop all running Vulhub / Docker Hub services?'))
+			return
 		setIsResettingAll(true)
 		try {
 			await fetch('/api/services/undeploy-all', { method: 'POST' })
@@ -162,10 +216,68 @@ export default function ServicesPage() {
 			})
 			if (!response.ok) throw new Error('Switch failed')
 			const updated = (await response.json()) as ServiceItem
-			setServices(prev => prev.map(s => (s.name === updated.name ? updated : s)))
+			setServices(prev =>
+				prev.map(s => (s.name === updated.name ? updated : s)),
+			)
 			toast.success(`${updated.displayName}: switched to ${profile}`)
 		} catch {
 			toast.error(`Failed to switch profile`)
+		} finally {
+			setBusyService(null)
+		}
+	}
+
+	const switchVariant = async (service: ServiceItem) => {
+		const targetVariant = pendingVariant[service.name] ?? service.activeVariant
+		if (!targetVariant || targetVariant === service.activeVariant) {
+			toast.error('Select a different variant first')
+			return
+		}
+
+		const confirmed = window.confirm(
+			`Switch ${service.displayName} from ${service.activeVariant} to ${targetVariant}? This may restart the service.`,
+		)
+		if (!confirmed) return
+
+		setBusyService(service.name)
+		try {
+			const response = await fetch(
+				`/api/services/${service.name}/switch-variant`,
+				{
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({
+						targetVariant,
+						rollbackOnFailure: true,
+					}),
+				},
+			)
+
+			if (!response.ok) {
+				const err = await response
+					.json()
+					.catch(() => ({ message: 'Variant switch failed' }))
+				throw new Error(err.message ?? 'Variant switch failed')
+			}
+
+			const result = (await response.json()) as SwitchVariantResult
+			await fetchServices()
+
+			if (result.operation.status === 'success') {
+				toast.success(
+					`${service.displayName}: switched to ${result.operation.to}`,
+				)
+			} else if (result.operation.rolledBack) {
+				toast.error(
+					`${service.displayName}: switch failed, rolled back to ${result.operation.from}`,
+				)
+			} else {
+				toast.error(`${service.displayName}: switch failed and rollback failed`)
+			}
+		} catch (error) {
+			toast.error(
+				error instanceof Error ? error.message : 'Variant switch failed',
+			)
 		} finally {
 			setBusyService(null)
 		}
@@ -185,8 +297,24 @@ export default function ServicesPage() {
 
 	const deployServices = services.filter(s => s.deployMode !== 'profile')
 	const runningDeployCount = deployServices.filter(s => s.running).length
-	const capacityPercent = Math.min(100, (runningDeployCount / maxConcurrent) * 100)
+	const capacityPercent = Math.min(
+		100,
+		(runningDeployCount / maxConcurrent) * 100,
+	)
 	const atCapacity = runningDeployCount >= maxConcurrent
+
+	useEffect(() => {
+		setPendingVariant(prev => {
+			const next = { ...prev }
+			for (const service of services) {
+				if (!next[service.name]) {
+					next[service.name] =
+						service.activeVariant || service.activeProfile || ''
+				}
+			}
+			return next
+		})
+	}, [services])
 
 	const categorySidebar = (
 		<>
@@ -255,8 +383,8 @@ export default function ServicesPage() {
 							Lab Services
 						</h2>
 						<p className='text-sm text-muted-foreground'>
-							Deploy vulnerable services from Vulhub and Docker Hub.
-							Max {maxConcurrent} running at once for stability.
+							Deploy vulnerable services from Vulhub and Docker Hub. Max{' '}
+							{maxConcurrent} running at once for stability.
 						</p>
 					</div>
 
@@ -268,7 +396,9 @@ export default function ServicesPage() {
 								onClick={() => void undeployAll()}
 								disabled={isResettingAll}
 							>
-								{isResettingAll && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}
+								{isResettingAll && (
+									<Loader2 className='mr-2 h-4 w-4 animate-spin' />
+								)}
 								<Square className='mr-2 h-4 w-4' />
 								Stop All Lab Services
 							</Button>
@@ -279,7 +409,11 @@ export default function ServicesPage() {
 							aria-label='Refresh services'
 							onClick={() => void fetchServices()}
 							disabled={isLoading}
-							icon={<RefreshCw className={cn('h-4 w-4', isLoading && 'animate-spin')} />}
+							icon={
+								<RefreshCw
+									className={cn('h-4 w-4', isLoading && 'animate-spin')}
+								/>
+							}
 						/>
 					</div>
 				</div>
@@ -299,7 +433,10 @@ export default function ServicesPage() {
 				{isLoading ? (
 					<div className='grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3'>
 						{Array.from({ length: 6 }).map((_, i) => (
-							<Card key={`skel-${i}`} className='border-zinc-200/60 shadow-sm dark:border-zinc-800'>
+							<Card
+								key={`skel-${i}`}
+								className='border-zinc-200/60 shadow-sm dark:border-zinc-800'
+							>
 								<CardHeader>
 									<Skeleton className='h-5 w-40' />
 									<Skeleton className='mt-2 h-4 w-full' />
@@ -316,6 +453,13 @@ export default function ServicesPage() {
 						{filteredServices.map(service => {
 							const isBusy = busyService === service.name
 							const isDeployMode = service.deployMode !== 'profile'
+							const isVariantEligible =
+								service.switchable === true && service.variantMode === 'image'
+							const variantEntries = Object.entries(service.variants ?? {})
+							const selectedVariant =
+								pendingVariant[service.name] ??
+								service.activeVariant ??
+								service.activeProfile
 
 							return (
 								<Card
@@ -373,9 +517,7 @@ export default function ServicesPage() {
 												</Badge>
 											)}
 											{service.hostPort && (
-												<span className='font-mono'>
-													:{service.hostPort}
-												</span>
+												<span className='font-mono'>:{service.hostPort}</span>
 											)}
 										</div>
 
@@ -434,7 +576,8 @@ export default function ServicesPage() {
 												<div className='flex items-center gap-2'>
 													{(() => {
 														const key = service.activeProfile as ProfileKey
-														const style = profileStyles[key] ?? profileStyles.easy
+														const style =
+															profileStyles[key] ?? profileStyles.easy
 														const Icon = style.icon
 														return (
 															<>
@@ -447,31 +590,89 @@ export default function ServicesPage() {
 													})()}
 												</div>
 												<div className='flex flex-wrap gap-2'>
-													{(['easy', 'medium', 'hard'] as ProfileKey[]).map(profileKey => {
-														if (!service.profiles[profileKey]) return null
-														const isActive = service.activeProfile === profileKey
-														const style = profileStyles[profileKey]
-														const Icon = style.icon
-														return (
-															<Button
-																key={profileKey}
-																size='sm'
-																variant={isActive ? 'default' : 'outline'}
-																className={cn('min-w-20', isActive && 'pointer-events-none')}
-																disabled={isBusy || isResettingAll}
-																onClick={() => void switchProfile(service.name, profileKey)}
-															>
-																{isBusy ? (
-																	<Loader2 className='mr-1 h-3.5 w-3.5 animate-spin' />
-																) : isActive ? (
-																	<Check className='mr-1 h-3.5 w-3.5' />
-																) : (
-																	<Icon className='mr-1 h-3.5 w-3.5' />
-																)}
-																{profileKey.charAt(0).toUpperCase() + profileKey.slice(1)}
-															</Button>
-														)
-													})}
+													{(['easy', 'medium', 'hard'] as ProfileKey[]).map(
+														profileKey => {
+															if (!service.profiles[profileKey]) return null
+															const isActive =
+																service.activeProfile === profileKey
+															const style = profileStyles[profileKey]
+															const Icon = style.icon
+															return (
+																<Button
+																	key={profileKey}
+																	size='sm'
+																	variant={isActive ? 'default' : 'outline'}
+																	className={cn(
+																		'min-w-20',
+																		isActive && 'pointer-events-none',
+																	)}
+																	disabled={isBusy || isResettingAll}
+																	onClick={() =>
+																		void switchProfile(service.name, profileKey)
+																	}
+																>
+																	{isBusy ? (
+																		<Loader2 className='mr-1 h-3.5 w-3.5 animate-spin' />
+																	) : isActive ? (
+																		<Check className='mr-1 h-3.5 w-3.5' />
+																	) : (
+																		<Icon className='mr-1 h-3.5 w-3.5' />
+																	)}
+																	{profileKey.charAt(0).toUpperCase() +
+																		profileKey.slice(1)}
+																</Button>
+															)
+														},
+													)}
+												</div>
+											</div>
+										)}
+
+										{isVariantEligible && variantEntries.length > 0 && (
+											<div className='space-y-2 border-t pt-3'>
+												<div className='flex items-center gap-2 text-xs text-muted-foreground'>
+													<span>Active Variant:</span>
+													<Badge variant='secondary'>
+														{service.activeVariant || 'unknown'}
+													</Badge>
+												</div>
+
+												<div className='flex items-center gap-2'>
+													<select
+														className='h-9 w-full rounded-md border border-input bg-background px-3 text-sm'
+														value={selectedVariant}
+														disabled={isBusy || isResettingAll}
+														onChange={event =>
+															setPendingVariant(prev => ({
+																...prev,
+																[service.name]: event.target.value,
+															}))
+														}
+													>
+														{variantEntries.map(([key, variant]) => (
+															<option key={key} value={key}>
+																{variant.label || key}
+															</option>
+														))}
+													</select>
+													<Button
+														size='sm'
+														className='min-w-20'
+														disabled={
+															isBusy ||
+															isResettingAll ||
+															!selectedVariant ||
+															selectedVariant === service.activeVariant
+														}
+														onClick={() => void switchVariant(service)}
+													>
+														{isBusy ? (
+															<Loader2 className='mr-1 h-3.5 w-3.5 animate-spin' />
+														) : (
+															<RefreshCw className='mr-1 h-3.5 w-3.5' />
+														)}
+														Switch
+													</Button>
 												</div>
 											</div>
 										)}

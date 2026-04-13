@@ -19,10 +19,7 @@ export class ServicesController {
 
 	// Legacy profile endpoints (custom services)
 	@Put(':name/profile')
-	switchProfile(
-		@Param('name') name: string,
-		@Body() body: SwitchProfileDto,
-	) {
+	switchProfile(@Param('name') name: string, @Body() body: SwitchProfileDto) {
 		return this.servicesService.switchProfile(name, body.profile)
 	}
 
@@ -48,10 +45,7 @@ export class ServicesController {
 	}
 
 	@Post(':name/switch-variant')
-	switchVariant(
-		@Param('name') name: string,
-		@Body() body: SwitchVariantDto,
-	) {
+	switchVariant(@Param('name') name: string, @Body() body: SwitchVariantDto) {
 		return this.servicesService.switchVariant(name, body)
 	}
 
