@@ -4,6 +4,32 @@ export interface ServiceProfileDto {
 	cves: string[]
 }
 
+export interface ServiceVariantHealthcheckDto {
+	type: 'http' | 'tcp'
+	path?: string
+	timeoutSec?: number
+}
+
+export interface ServiceVariantDto {
+	image: string
+	label: string
+	cves: string[]
+	healthcheck?: ServiceVariantHealthcheckDto
+}
+
+export interface SwitchVariantOperationDto {
+	status: 'success' | 'failed'
+	from: string
+	to: string
+	rolledBack: boolean
+	message: string
+}
+
+export interface SwitchVariantResultDto {
+	service: ServiceDto
+	operation: SwitchVariantOperationDto
+}
+
 export interface ServiceDto {
 	name: string
 	displayName: string
@@ -16,6 +42,11 @@ export interface ServiceDto {
 	ports: string[]
 	activeProfile: string
 	profiles: Record<string, ServiceProfileDto>
+	activeVariant: string
+	lastGoodVariant: string
+	switchable: boolean
+	variantMode: 'image' | null
+	variants: Record<string, ServiceVariantDto>
 
 	/** New deploy-mode fields (Vulhub / Docker Hub services) */
 	deployMode: 'profile' | 'compose' | 'image'

@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Post, Put } from '@nestjs/common'
 import { ServicesService } from './services.service'
 import { SwitchProfileDto } from './switch-profile.dto'
+import { SwitchVariantDto } from './switch-variant.dto'
 
 @Controller('services')
 export class ServicesController {
@@ -44,6 +45,14 @@ export class ServicesController {
 	@Post(':name/undeploy')
 	undeployService(@Param('name') name: string) {
 		return this.servicesService.undeployService(name)
+	}
+
+	@Post(':name/switch-variant')
+	switchVariant(
+		@Param('name') name: string,
+		@Body() body: SwitchVariantDto,
+	) {
+		return this.servicesService.switchVariant(name, body)
 	}
 
 	@Post('undeploy-all')

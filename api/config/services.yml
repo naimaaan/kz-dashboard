@@ -1,6 +1,9 @@
 settings:
   max_concurrent: 3
   vulhub_dir: /home/projects/kz-dashboard/vulhub-master
+  protected_service_names:
+    - dashboard-api
+    - dashboard-web
 
 # ============================================================
 # EXISTING SERVICES (profile-based, placeholder images)
@@ -35,6 +38,38 @@ services:
         label: Hard - Fully patched
         cves: []
     active_profile: easy
+    switchable: true
+    variant_mode: image
+    active_variant: easy
+    last_good_variant: easy
+    variants:
+      easy:
+        image: kzsploitable/wordpress:vuln-easy
+        label: Easy - All vulnerabilities active
+        cves:
+          - CVE-2024-27956
+          - CVE-2023-32243
+        healthcheck:
+          type: http
+          path: /
+          timeout_sec: 30
+      medium:
+        image: kzsploitable/wordpress:vuln-medium
+        label: Medium - Limited vulnerabilities
+        cves:
+          - CVE-2024-27956
+        healthcheck:
+          type: http
+          path: /
+          timeout_sec: 30
+      hard:
+        image: kzsploitable/wordpress:secure
+        label: Hard - Fully patched
+        cves: []
+        healthcheck:
+          type: http
+          path: /
+          timeout_sec: 30
 
   suitecrm:
     display_name: SuiteCRM
@@ -216,6 +251,28 @@ services:
     container_port: 1337
     cves:
       - CVE-2019-18818
+    switchable: true
+    variant_mode: image
+    active_variant: vuln
+    last_good_variant: vuln
+    variants:
+      vuln:
+        image: strapi/strapi:3.0.0-beta.17.4
+        label: Vulnerable - Password reset RCE
+        cves:
+          - CVE-2019-18818
+        healthcheck:
+          type: http
+          path: /admin
+          timeout_sec: 40
+      patched:
+        image: strapi/strapi:latest
+        label: Patched - Latest image
+        cves: []
+        healthcheck:
+          type: http
+          path: /admin
+          timeout_sec: 40
 
   roundcube:
     display_name: Roundcube 1.2.2

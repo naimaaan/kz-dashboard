@@ -1,5 +1,6 @@
 import {
 	BadRequestException,
+	ConflictException,
 	Injectable,
 	NotFoundException,
 } from '@nestjs/common'
@@ -8,7 +9,13 @@ import * as Docker from 'dockerode'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as yaml from 'js-yaml'
-import { ServiceDto, ServiceProfileDto } from './service.dto'
+import {
+	ServiceDto,
+	ServiceProfileDto,
+	ServiceVariantDto,
+	SwitchVariantResultDto,
+} from './service.dto'
+import { SwitchVariantDto } from './switch-variant.dto'
 
 const isWin = process.platform === 'win32'
 
@@ -22,6 +29,19 @@ interface YamlProfile {
 	cves: string[]
 }
 
+interface YamlVariantHealthcheck {
+	type: 'http' | 'tcp'
+	path?: string
+	timeout_sec?: number
+}
+
+interface YamlVariant {
+	image: string
+	label: string
+	cves?: string[]
+	healthcheck?: YamlVariantHealthcheck
+}
+
 interface YamlServiceEntry {
 	display_name: string
 	description: string
@@ -30,6 +50,11 @@ interface YamlServiceEntry {
 	network?: string
 	ports?: string[]
 	env?: Record<string, string>
+	switchable?: boolean
+	variant_mode?: 'image'
+	variants?: Record<string, YamlVariant>
+	active_variant?: string
+	last_good_variant?: string
 	profiles?: Record<string, YamlProfile>
 	active_profile?: string
 	deploy_mode?: 'compose' | 'image'
@@ -44,11 +69,21 @@ interface YamlServiceEntry {
 interface YamlSettings {
 	max_concurrent: number
 	vulhub_dir: string
+	protected_service_names?: string[]
 }
 
 interface YamlConfig {
 	settings?: YamlSettings
 	services: Record<string, YamlServiceEntry>
+}
+
+interface SwitchVariantContext {
+	config: YamlConfig
+	entry: YamlServiceEntry
+	variants: Record<string, YamlVariant>
+	target: YamlVariant
+	fromVariant: string
+	targetVariant: string
 }
 
 function execAsync(cmd: string, cwd?: string): Promise<{ stdout: string; stderr: string }> {
@@ -66,6 +101,7 @@ function execAsync(cmd: string, cwd?: string): Promise<{ stdout: string; stderr:
 @Injectable()
 export class ServicesService {
 	private readonly configPath: string
+	private readonly switchLocks = new Set<string>()
 
 	constructor() {
 		this.configPath =
@@ -219,6 +255,146 @@ export class ServicesService {
 		}
 
 		return { stopped }
+	}
+
+	async switchVariant(name: string, body: SwitchVariantDto): Promise<SwitchVariantResultDto> {
+		if (this.switchLocks.has(name)) {
+			throw new ConflictException(`Service "${name}" is already switching`)
+		}
+
+		this.switchLocks.add(name)
+
+		try {
+			const context = this.buildSwitchVariantContext(name, body)
+			const { config, entry, variants, target, fromVariant, targetVariant } = context
+
+			if (fromVariant === targetVariant) {
+				return this.buildSwitchVariantResult(
+					name,
+					context,
+					'success',
+					false,
+					'Variant already active',
+				)
+			}
+
+			this.assertNoPortConflict(name, entry, config)
+
+			const rollbackVariant = this.resolveRollbackVariant(entry, variants)
+			let rolledBack = false
+			let switchError: string | null = null
+
+			try {
+				await this.recreateImageVariantContainer(name, entry, target.image)
+				await this.runVariantHealthCheck(name, entry, target)
+
+				this.applyVariantStateOnSuccess(entry, targetVariant)
+				this.writeConfig(config)
+				return this.buildSwitchVariantResult(
+					name,
+					context,
+					'success',
+					false,
+					'Variant switched successfully',
+				)
+			} catch (error) {
+				switchError = error instanceof Error ? error.message : 'unknown switch failure'
+
+				if (body.rollbackOnFailure !== false && rollbackVariant && variants[rollbackVariant]) {
+					try {
+						const fallback = variants[rollbackVariant]
+						await this.recreateImageVariantContainer(name, entry, fallback.image)
+						await this.runVariantHealthCheck(name, entry, fallback)
+						rolledBack = true
+					} catch {
+						rolledBack = false
+					}
+				}
+
+				const message = rolledBack
+					? `Switch failed: ${switchError}. Rolled back to ${rollbackVariant}.`
+					: `Switch failed: ${switchError}. Rollback failed.`
+				return this.buildSwitchVariantResult(
+					name,
+					context,
+					'failed',
+					rolledBack,
+					message,
+				)
+			}
+		} finally {
+			this.switchLocks.delete(name)
+		}
+	}
+
+	private buildSwitchVariantContext(name: string, body: SwitchVariantDto): SwitchVariantContext {
+		const targetVariant = body.targetVariant?.trim()
+		if (!targetVariant) {
+			throw new BadRequestException('targetVariant is required')
+		}
+
+		const config = this.readConfig()
+		const entry = config.services[name]
+		if (!entry) throw new NotFoundException(`Service not found: ${name}`)
+		if (!entry.switchable) {
+			throw new BadRequestException(`Service "${name}" is not switchable`)
+		}
+		if (entry.variant_mode !== 'image') {
+			throw new BadRequestException(`Service "${name}" does not support image variant switching`)
+		}
+		if (this.isProtectedService(name, entry, config.settings)) {
+			throw new BadRequestException(`Service "${name}" is protected and cannot be switched`)
+		}
+
+		const variants = this.resolveVariants(entry)
+		const target = variants[targetVariant]
+		if (!target) {
+			throw new BadRequestException(
+				`Invalid targetVariant "${targetVariant}". Available: ${Object.keys(variants).join(', ')}`,
+			)
+		}
+
+		const fromVariant = this.resolveActiveVariant(entry)
+		if (!fromVariant || !variants[fromVariant]) {
+			throw new BadRequestException(`Current active variant is not valid for service "${name}"`)
+		}
+
+		return {
+			config,
+			entry,
+			variants,
+			target,
+			fromVariant,
+			targetVariant,
+		}
+	}
+
+	private applyVariantStateOnSuccess(entry: YamlServiceEntry, targetVariant: string): void {
+		entry.active_variant = targetVariant
+		entry.last_good_variant = targetVariant
+		if (entry.profiles?.[targetVariant]) {
+			entry.active_profile = targetVariant
+		}
+	}
+
+	private async buildSwitchVariantResult(
+		name: string,
+		context: SwitchVariantContext,
+		status: 'success' | 'failed',
+		rolledBack: boolean,
+		message: string,
+	): Promise<SwitchVariantResultDto> {
+		const containers = await this.listAllContainers()
+		return {
+			service: this.toServiceDto(name, context.entry, context.config.settings, containers),
+			operation: {
+				status,
+				from: context.fromVariant,
+				to: context.targetVariant,
+				rolledBack,
+				message,
+			},
+		}
 	}
 
 	// ── COMPOSE DEPLOYMENT ──────────────────────────────────
@@ -383,6 +559,77 @@ export class ServicesService {
 		}
 	}
 
+	private getVariantContainerName(name: string, entry: YamlServiceEntry): string {
+		if (entry.deploy_mode === 'image') {
+			return `kz-${name}`
+		}
+		return entry.container_name ?? `kz-${name}`
+	}
+
+	private async recreateImageVariantContainer(
+		name: string,
+		entry: YamlServiceEntry,
+		image: string,
+	): Promise<void> {
+		// Phase 1 MVP scope: this recreates a single image-based container in-place.
+		// Compose stacks and multi-container dependency orchestration are intentionally out of scope.
+		const containerName = this.getVariantContainerName(name, entry)
+
+		try {
+			const existing = docker.getContainer(containerName)
+			const info = await existing.inspect()
+			if (info.State.Running) await existing.stop()
+			await existing.remove({ force: true })
+		} catch {
+			// container doesn't exist
+		}
+
+		try {
+			await new Promise<void>((resolve, reject) => {
+				docker.pull(image, (err: Error | null, stream: NodeJS.ReadableStream) => {
+					if (err) { reject(err); return }
+					docker.modem.followProgress(stream, (followErr: Error | null) => {
+						followErr ? reject(followErr) : resolve()
+					})
+				})
+			})
+		} catch (error) {
+			console.warn(`Pull failed for ${image}:`, error instanceof Error ? error.message : error)
+		}
+
+		const portBindings: Record<string, Array<{ HostPort: string }>> = {}
+		const exposedPorts: Record<string, object> = {}
+
+		for (const mapping of this.resolvePortMappings(entry)) {
+			const [hostPart, containerPort] = mapping.split(':')
+			if (!hostPart || !containerPort) continue
+			const key = `${containerPort}/tcp`
+			exposedPorts[key] = {}
+			portBindings[key] = [{ HostPort: hostPart }]
+		}
+
+		const envList = Object.entries(entry.env ?? {}).map(([k, v]) => `${k}=${v}`)
+
+		const hostConfig: Docker.ContainerCreateOptions['HostConfig'] = {
+			PortBindings: portBindings,
+			RestartPolicy: { Name: 'unless-stopped' },
+		}
+
+		if (entry.network) {
+			hostConfig.NetworkMode = entry.network
+		}
+
+		const container = await docker.createContainer({
+			Image: image,
+			name: containerName,
+			Env: envList,
+			ExposedPorts: exposedPorts,
+			HostConfig: hostConfig,
+		})
+
+		await container.start()
+	}
+
 	// ── PROFILE CONTAINER (legacy) ──────────────────────────
 
 	private async recreateProfileContainer(
@@ -483,6 +730,180 @@ export class ServicesService {
 		return count
 	}
 
+	private resolveVariants(entry: YamlServiceEntry): Record<string, YamlVariant> {
+		if (entry.variants && Object.keys(entry.variants).length > 0) {
+			return entry.variants
+		}
+
+		if (entry.profiles && Object.keys(entry.profiles).length > 0) {
+			const variants: Record<string, YamlVariant> = {}
+			for (const [key, profile] of Object.entries(entry.profiles)) {
+				variants[key] = {
+					image: profile.image,
+					label: profile.label,
+					cves: profile.cves ?? [],
+				}
+			}
+			return variants
+		}
+
+		return {}
+	}
+
+	private resolveActiveVariant(entry: YamlServiceEntry): string {
+		return entry.active_variant ?? entry.active_profile ?? ''
+	}
+
+	private resolveRollbackVariant(
+		entry: YamlServiceEntry,
+		variants: Record<string, YamlVariant>,
+	): string {
+		if (entry.last_good_variant && variants[entry.last_good_variant]) {
+			return entry.last_good_variant
+		}
+		const active = this.resolveActiveVariant(entry)
+		if (active && variants[active]) {
+			return active
+		}
+		return ''
+	}
+
+	private resolvePortMappings(entry: YamlServiceEntry): string[] {
+		if (entry.ports?.length) {
+			return entry.ports
+		}
+
+		if (entry.host_port && entry.container_port) {
+			return [`${entry.host_port}:${entry.container_port}`]
+		}
+
+		return []
+	}
+
+	private resolveHostPort(entry: YamlServiceEntry): number | null {
+		if (entry.host_port) return entry.host_port
+
+		const first = this.resolvePortMappings(entry)[0]
+		if (!first) return null
+		const [host] = first.split(':')
+		const parsed = Number(host)
+		return Number.isFinite(parsed) ? parsed : null
+	}
+
+	private async runVariantHealthCheck(
+		name: string,
+		entry: YamlServiceEntry,
+		variant: YamlVariant,
+	): Promise<void> {
+		const containerName = this.getVariantContainerName(name, entry)
+		const timeoutSec = variant.healthcheck?.timeout_sec ?? 30
+		const deadline = Date.now() + timeoutSec * 1000
+
+		while (Date.now() <= deadline) {
+			const container = docker.getContainer(containerName)
+			let running = false
+
+			try {
+				const info = await container.inspect()
+				running = info.State.Running
+			} catch {
+				running = false
+			}
+
+			if (running) {
+				const hc = variant.healthcheck
+				if (!hc) return
+
+				if (hc.type === 'http') {
+					const hostPort = this.resolveHostPort(entry)
+					if (!hostPort) return
+
+					const pathSuffix = hc.path ?? '/'
+					try {
+						const response = await fetch(`http://127.0.0.1:${hostPort}${pathSuffix}`)
+						if (response.ok) return
+					} catch {
+						// retry until timeout
+					}
+				} else if (hc.type === 'tcp') {
+					const hostPort = this.resolveHostPort(entry)
+					if (!hostPort) return
+					const open = await this.checkTcpPort(hostPort)
+					if (open) return
+				}
+			}
+
+			await new Promise(resolve => setTimeout(resolve, 1500))
+		}
+
+		throw new BadRequestException('Variant health check timed out')
+	}
+
+	private async checkTcpPort(port: number): Promise<boolean> {
+		const { Socket } = await import('net')
+		return new Promise(resolve => {
+			const socket = new Socket()
+			let settled = false
+
+			const finish = (ok: boolean) => {
+				if (settled) return
+				settled = true
+				socket.destroy()
+				resolve(ok)
+			}
+
+			socket.setTimeout(1000)
+			socket.once('connect', () => finish(true))
+			socket.once('timeout', () => finish(false))
+			socket.once('error', () => finish(false))
+			socket.connect(port, '127.0.0.1')
+		})
+	}
+
+	private isProtectedService(
+		name: string,
+		entry: YamlServiceEntry,
+		settings?: YamlSettings,
+	): boolean {
+		const defaultProtectedServices = ['dashboard-api', 'dashboard-web']
+		const configProtected = settings?.protected_service_names ?? []
+		const protectedServiceNames = new Set(
+			[...defaultProtectedServices, ...configProtected].map(item => item.toLowerCase()),
+		)
+
+		const defaultProtectedContainers = ['dashboard-api', 'dashboard-web', 'docker', 'containerd']
+		const envProtected =
+			process.env.PROTECTED_CONTAINERS?.split(',')
+				.map(value => value.trim().toLowerCase())
+				.filter(value => value.length > 0) ?? []
+		const protectedContainerNames = new Set([
+			...defaultProtectedContainers,
+			...envProtected,
+		])
+
+		const serviceName = name.toLowerCase()
+		const containerName = this.getVariantContainerName(name, entry).toLowerCase()
+
+		return protectedServiceNames.has(serviceName) || protectedContainerNames.has(containerName)
+	}
+
+	private assertNoPortConflict(name: string, entry: YamlServiceEntry, config: YamlConfig): void {
+		const ownPorts = new Set(this.resolvePortMappings(entry).map(mapping => mapping.split(':')[0]).filter(Boolean))
+		if (ownPorts.size === 0) return
+
+		for (const [otherName, otherEntry] of Object.entries(config.services)) {
+			if (otherName === name) continue
+			for (const mapping of this.resolvePortMappings(otherEntry)) {
+				const [otherHost] = mapping.split(':')
+				if (otherHost && ownPorts.has(otherHost)) {
+					throw new BadRequestException(
+						`Host port ${otherHost} conflicts with service "${otherName}"`,
+					)
+				}
+			}
+		}
+	}
+
 	private isDeployServiceRunning(
 		name: string,
 		entry: YamlServiceEntry,
@@ -510,7 +931,7 @@ export class ServicesService {
 	private toServiceDto(
 		name: string,
 		entry: YamlServiceEntry,
-		settings: YamlSettings | undefined,
+		_settings: YamlSettings | undefined,
 		containers: Map<string, { id: string; running: boolean }>,
 	): ServiceDto {
 		const hasProfiles = !!entry.profiles
@@ -533,23 +954,13 @@ export class ServicesService {
 			containerId = status.containerId
 		}
 
-		const profiles: Record<string, ServiceProfileDto> = {}
-		if (entry.profiles) {
-			for (const [key, p] of Object.entries(entry.profiles)) {
-				profiles[key] = { image: p.image, label: p.label, cves: p.cves ?? [] }
-			}
-		}
+		const profiles = this.mapProfiles(entry)
+		const variants = this.mapVariants(entry)
 
-		const hostPort = entry.host_port ?? null
+		const hostPort = this.resolveHostPort(entry)
 		const accessUrl = running && hostPort ? `http://localhost:${hostPort}` : null
 
-		let cves = entry.cves ?? []
-		if (entry.profiles && entry.active_profile) {
-			const activeProfileData = entry.profiles[entry.active_profile]
-			if (activeProfileData?.cves?.length) {
-				cves = activeProfileData.cves
-			}
-		}
+		const cves = this.resolveActiveCves(entry)
 
 		return {
 			name,
@@ -561,6 +972,11 @@ export class ServicesService {
 			ports: entry.ports ?? [],
 			activeProfile: entry.active_profile ?? '',
 			profiles,
+			activeVariant: this.resolveActiveVariant(entry),
+			lastGoodVariant: entry.last_good_variant ?? this.resolveActiveVariant(entry),
+			switchable: entry.switchable ?? false,
+			variantMode: entry.variant_mode ?? null,
+			variants,
 			deployMode,
 			hostPort,
 			containerPort: entry.container_port ?? null,
@@ -570,6 +986,53 @@ export class ServicesService {
 			running,
 			containerId,
 		}
+	}
+
+	private mapProfiles(entry: YamlServiceEntry): Record<string, ServiceProfileDto> {
+		const profiles: Record<string, ServiceProfileDto> = {}
+		if (!entry.profiles) return profiles
+
+		for (const [key, profile] of Object.entries(entry.profiles)) {
+			profiles[key] = {
+				image: profile.image,
+				label: profile.label,
+				cves: profile.cves ?? [],
+			}
+		}
+
+		return profiles
+	}
+
+	private mapVariants(entry: YamlServiceEntry): Record<string, ServiceVariantDto> {
+		const variants: Record<string, ServiceVariantDto> = {}
+
+		for (const [key, variant] of Object.entries(this.resolveVariants(entry))) {
+			variants[key] = {
+				image: variant.image,
+				label: variant.label,
+				cves: variant.cves ?? [],
+				healthcheck: variant.healthcheck
+					? {
+						type: variant.healthcheck.type,
+						path: variant.healthcheck.path,
+						timeoutSec: variant.healthcheck.timeout_sec,
+					}
+					: undefined,
+			}
+		}
+
+		return variants
+	}
+
+	private resolveActiveCves(entry: YamlServiceEntry): string[] {
+		if (entry.profiles && entry.active_profile) {
+			const activeProfileData = entry.profiles[entry.active_profile]
+			if (activeProfileData?.cves?.length) {
+				return activeProfileData.cves
+			}
+		}
+
+		return entry.cves ?? []
 	}
 
 	// ── CONFIG I/O ──────────────────────────────────────────
