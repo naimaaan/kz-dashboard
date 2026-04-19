@@ -864,9 +864,7 @@ export class ServicesService {
 		try {
 			const info = await docker.getContainer(match.Id).inspect()
 			const networks = info.NetworkSettings?.Networks
-			const firstNetwork = networks
-				? Object.values(networks)[0]
-				: undefined
+			const firstNetwork = networks ? Object.values(networks)[0] : undefined
 
 			return {
 				ipAddress: firstNetwork?.IPAddress || null,
